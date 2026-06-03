@@ -56,6 +56,31 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-03 — Phase 1 planned
+
+Four external accounts will be wired up before any pipeline code is written. Click-by-click guide lives in `LEARNING.md`. Decisions locked in here:
+
+- **Azure ADLS Gen2**
+  - Resource group: `tickstream-rg`
+  - Region: Australia East (lowest latency for owner)
+  - Storage account: globally unique name, lowercase, hierarchical namespace enabled
+  - Containers: `bronze`, `silver`, `gold`, `bad-records`, `archive`
+  - Performance: Standard. Redundancy: LRS. Trade-off: no geo-redundancy, but cheapest. Cost matters more than DR for a portfolio project.
+- **Infisical**
+  - Project: `tickstream-lakehouse`
+  - Environment: `dev` only for now. Could add `prod` later if a separate prod path is ever built.
+  - Machine identity: `github-actions-ingest`, Universal Auth, Viewer role on `dev`.
+- **Discord**
+  - Server: `tickstream-alerts`
+  - Channel: `#pipeline-alerts`
+  - Webhook stored in Infisical as `DISCORD_WEBHOOK_URL`.
+- **GitHub Secrets** (bootstrap only)
+  - `INFISICAL_CLIENT_ID`
+  - `INFISICAL_CLIENT_SECRET`
+  - `INFISICAL_PROJECT_ID`
+  - Rationale: smallest possible blast radius. If GitHub is compromised, only Infisical access leaks, not Azure or Databricks credentials. Infisical can revoke the identity to cut the chain.
+- **Databricks Free Edition**: deferred to Phase 3. Not needed until Silver transforms begin.
+
 ## Next phase
 
-**Phase 1: external accounts.** Step-by-step click guide will appear in `LEARNING.md` Phase 1 section. Accounts to set up: Azure ADLS Gen2 storage account, Infisical workspace, Discord webhook, Databricks Free Edition workspace. No code in this phase. Output is a populated vault with named secrets that Phase 2 will reference.
+**Phase 2: Bronze ingestion.** Starts after Phase 1 accounts are confirmed live. Output: a working hourly GitHub Actions workflow that downloads Binance Vision aggTrades for the three symbols, lands the raw file in ADLS `bronze/`, computes SHA-256, writes a plain-English run log to `logs/runs/`, and fires the missing-source-file Discord alert if the source is unreachable.

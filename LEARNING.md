@@ -58,6 +58,110 @@ The journal grows as we build. Each phase gets a section.
 
 **The Mermaid diagram trick.** GitHub renders Mermaid blocks inside markdown automatically. You write a fenced block with the language `mermaid` and GitHub shows the diagram. This means the architecture diagram lives next to the code, in version control, and updates with every PR. No more "the diagram is in someone's Lucidchart that they have not opened since 2023".
 
-### Phase 1 — coming next
+### Phase 1 — External accounts and vault wiring (2026-06-03)
 
-External accounts. Click-by-click guide goes here once we start Phase 1.
+**What we are doing.** We set up four external services that the pipeline will use, and put the smallest possible bootstrap secret into GitHub. Everything else lives in a real vault (Infisical) and is fetched at workflow runtime.
+
+**Why this matters.** A common portfolio mistake is dropping every secret into GitHub Actions Secrets and calling it "secrets management". That works but is not how enterprises actually do it. Real teams use a vault (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Infisical) and bootstrap only one identity token into the CI system. This phase teaches you that pattern with the free tier of Infisical.
+
+**The four accounts at a glance.**
+
+| Account | What it stores | Why this one |
+|---|---|---|
+| Azure ADLS Gen2 | Bronze raw zips, Silver and Gold Delta tables | The lakehouse storage layer. Free for 12 months. |
+| Infisical | All operational secrets (Azure key, Databricks token, Discord URL) | A real vault, not just env vars. Free tier covers this project. |
+| GitHub Secrets | ONE secret only: the Infisical bootstrap credentials | Used at workflow start to fetch everything else from Infisical. |
+| Discord webhook | The endpoint we POST alerts to | Free, durable, easy to filter by channel. |
+
+Databricks Free Edition is **deferred to Phase 3** since we do not need it until Silver transforms start.
+
+---
+
+#### Step 1 — Azure ADLS Gen2 storage account
+
+If you do not already have an Azure account, go to https://azure.microsoft.com/free and sign up with your normal email. You get $200 credit and 12 months free tier. No charges if you stay within free tier limits.
+
+Inside the Azure portal:
+
+1. Search bar at the top: type **Storage accounts**, click the service.
+2. Click **+ Create**.
+3. **Subscription**: your default. **Resource group**: click **Create new**, name it `tickstream-rg`.
+4. **Storage account name**: must be globally unique, 3 to 24 lowercase letters and numbers. Suggested: `tickstreamlake01`. If taken, add digits.
+5. **Region**: Australia East (lowest latency for you).
+6. **Performance**: Standard.
+7. **Redundancy**: LRS (locally redundant, cheapest).
+8. Click **Next: Advanced**.
+9. CRITICAL: Tick **Enable hierarchical namespace**. This is what turns plain Blob storage into ADLS Gen2. Without it, the Delta Lake parts later will be painful.
+10. Click **Review + create**, then **Create**.
+
+Wait about 30 seconds for the deployment to finish, then **Go to resource**.
+
+Get the access key:
+
+11. Left menu: **Security + networking → Access keys**.
+12. Click **Show** next to key1. Copy the **Storage account name** and the **Key** value into a notepad.
+
+Create the five containers:
+
+13. Left menu: **Data storage → Containers**.
+14. Click **+ Container** five times. Names exactly: `bronze`, `silver`, `gold`, `bad-records`, `archive`.
+
+Done with Azure.
+
+---
+
+#### Step 2 — Infisical vault
+
+1. Go to https://infisical.com, click **Sign Up**, use the same email.
+2. Verify your email, log in.
+3. **Create Project**, name it `tickstream-lakehouse`. The default environment is `dev`, leave that as is.
+4. Left sidebar: **Secrets**. You see an empty secret list.
+5. Click **+ Add Secret** and add the first two now. Names exactly:
+
+| Secret name | Value |
+|---|---|
+| `AZURE_STORAGE_ACCOUNT_NAME` | The storage account name from Step 1 |
+| `AZURE_STORAGE_ACCESS_KEY` | The key1 value from Step 1 |
+
+Leave the rest of the registry in `config/secrets_required.md` blank for now. We fill them when we need them.
+
+Create a machine identity for GitHub Actions:
+
+6. Left sidebar: **Access Control → Machine Identities**.
+7. Click **+ Create Identity**, name it `github-actions-ingest`.
+8. Auth method: **Universal Auth**. Click create.
+9. Click into the new identity. Under **Authentication → Universal Auth → Client Secrets**, click **+ Create Client Secret**. Copy both the **Client ID** (top of the page) and the new **Client Secret** value into your notepad. The Client Secret is shown ONCE so do not close the modal until it is copied.
+10. Back in the project (left sidebar **Access Control → Identities** or the project's Identities tab), click **+ Add Identity**, choose `github-actions-ingest`, give it the **Viewer** role on the `dev` environment.
+
+You will also need the **Project ID**. Find it in the project URL `https://app.infisical.com/project/<PROJECT_ID>/...` or in the project settings page. Copy that too.
+
+---
+
+#### Step 3 — Discord webhook
+
+1. Open Discord. If you do not already have a server, click the **+** on the left, **Create My Own → For me and my friends**, name it `tickstream-alerts`.
+2. Inside the server, hover the channel list, click **+** to create a channel called `pipeline-alerts`. Make it a text channel.
+3. Right-click the channel, **Edit Channel → Integrations → Webhooks → New Webhook**.
+4. Name it `TickStream Alerts`. Click **Copy Webhook URL**.
+5. Go back to Infisical, click **+ Add Secret**, name `DISCORD_WEBHOOK_URL`, paste the URL as the value.
+
+---
+
+#### Step 4 — Wire the bootstrap secrets into GitHub
+
+This is the one and only place a secret is stored in GitHub Actions Secrets. Everything else flows from Infisical.
+
+1. Go to https://github.com/Tharindi-W/tickstream-lakehouse/settings/secrets/actions
+2. Click **New repository secret** and add these three, one at a time:
+
+| Name | Value |
+|---|---|
+| `INFISICAL_CLIENT_ID` | The Client ID from Step 2.9 |
+| `INFISICAL_CLIENT_SECRET` | The Client Secret from Step 2.9 |
+| `INFISICAL_PROJECT_ID` | The Project ID from the Infisical URL |
+
+---
+
+**Verify.** When you tell me Phase 1 is done, I will write a tiny GitHub Actions workflow that runs the Infisical CLI, fetches `AZURE_STORAGE_ACCOUNT_NAME`, and prints just the first three characters of it (so we prove the vault chain works without leaking the secret). That is our smoke test for Phase 1.
+
+**Key idea.** Every secret has exactly one home. Infisical for operational secrets, GitHub for the bootstrap. No copy-pasting between systems, no `.env` files in chat, no Slack DMs of credentials. This is the property an auditor checks for.
