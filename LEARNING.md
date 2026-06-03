@@ -240,14 +240,70 @@ You now have a small but real lakehouse foundation: a vault, a cron-scheduled in
 
 This is enough to start meaningfully exercising PySpark when we get to Silver. Three-and-a-quarter million rows is small for Spark in absolute terms but already large enough that a Pandas-only Silver would struggle as we add more days and more symbols.
 
-### Phase 3 — coming next
+### Phase 3 — Silver transformation on Databricks Free Edition
 
-Silver transformation. PySpark on Databricks Free Edition reads the Bronze Delta we just produced, deduplicates within `(symbol, batch_date)`, type-casts strings into proper Decimal/Timestamp/Bool, enforces an asserted schema, applies a Soda Core DQ suite, quarantines anything that fails a check, and writes Silver Delta. We will also wire up `badRecordsPath` so that single malformed rows do not kill the job.
+**What you set up here.** A real Spark workspace running real PySpark on real Bronze data, orchestrated from GitHub Actions over the Databricks Jobs API. After Phase 3 you can credibly say "I have used Databricks in production-shape work."
 
-Concrete deliverables for Phase 3:
+**The four account steps.**
 
-- A Databricks Free Edition workspace and a notebook (or job) that reads Bronze.
-- A PySpark transform module under `pipeline/silver/transform_silver.py` and a Databricks job spec under `pipeline/silver/job.yaml`.
-- Soda Core checks file under `dq/soda_silver.yml`.
-- An updated GitHub Actions workflow that triggers the Databricks Silver job after Bronze succeeds, using the `DATABRICKS_HOST` and `DATABRICKS_TOKEN` secrets already reserved in Infisical.
-- An additional Phase 3 smoke test workflow proving the Bronze → Silver chain works end to end.
+#### Step 1 — Databricks Free Edition signup (5 min)
+
+1. Open https://www.databricks.com/learn/free-edition in your browser.
+2. Click **Get Started** (or **Try Databricks Free**).
+3. Sign up with the same email you used for Infisical and Azure. No credit card required.
+4. Verify the email if prompted.
+5. When asked to pick a cloud provider for the trial, choose anything (we won't use the cloud integration, just the compute and notebooks Free Edition gives us directly).
+6. Region: pick the one closest to Australia (Sydney/East Asia/US West are usual options).
+7. Wait for your workspace to provision. The URL will look like `https://dbc-XXXXXXXX-XXXX.cloud.databricks.com`. Copy it.
+
+#### Step 2 — Verify you can launch compute (2 min)
+
+1. Inside the workspace, left sidebar: **Compute → All-purpose compute**.
+2. If you see no clusters, click **Create compute** to confirm the option is there (do not actually create one yet, Free Edition's Serverless is what we use). Free Edition typically gives you a default Serverless cluster.
+3. Left sidebar: **Workspace → Users → your-email**. You should see a Home folder.
+
+If anything here looks different from what I described, screenshot it. Databricks UIs vary by tenant.
+
+#### Step 3 — Generate a Personal Access Token (3 min)
+
+1. Top right: click your **profile circle → Settings**.
+2. Left sidebar inside Settings: **Developer**.
+3. Find **Access tokens → Manage**.
+4. Click **Generate new token**.
+5. Comment: `github-actions-silver`. Lifetime: leave default 90 days.
+6. Click Generate. A modal shows the token value ONCE. Copy it immediately. If you close the modal without copying, you have to make a new one.
+
+#### Step 4 — Put the workspace URL and token into Infisical (2 min)
+
+1. Open Infisical → `tickstream-lakehouse` project → Dev env.
+2. Find the secret named `DATABRICKS_HOST` (it should already exist as a placeholder from Phase 1). Click it, paste the workspace URL (full URL with `https://`), save.
+3. Find `DATABRICKS_TOKEN`. Paste the token from step 3.6, save.
+4. Confirm Infisical now shows 5 secrets with real values: `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCESS_KEY`, `ALERT_WEBHOOK_URL`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN`.
+
+That is it for your side. Tell me when done and I will run the Phase 3 vault chain smoke test (same idea as Phase 1, this time also calling the Databricks REST API to prove the token works) before any Silver code lands.
+
+---
+
+**Plan for what I build after your accounts are ready.**
+
+| Step | Output |
+|---|---|
+| 3a | `pipeline/silver/transform_silver.py` PySpark notebook source (committed in repo for review; Databricks gets a copy via Workspace API) |
+| 3b | `pipeline/silver/job_spec.json` Databricks Job spec describing tasks, parameters, retries |
+| 3c | Helper script `pipeline/silver/deploy.py` that uploads the notebook and creates/updates the job via Databricks API |
+| 3d | `.github/workflows/ingest-silver-after-bronze.yml` chained workflow triggered by successful Bronze runs, calls Jobs API run-now with batch parameters |
+| 3e | `dq/soda_silver.yml` Soda Core checks that read Silver via deltalake-py and fail loud on threshold breach |
+| 3f | Phase 3 smoke test workflow proving the full Bronze → Silver chain end to end |
+
+**Silver transformation logic at a glance.**
+
+- Read Bronze Delta filtered to the target batch_date.
+- Cast strings into proper types: `agg_trade_id` Long, `price`/`quantity` Decimal(38,8), `transact_time` from epoch-ms Long to Timestamp, `is_buyer_maker`/`is_best_match` Bool.
+- Compute `is_valid` boolean from null and range checks.
+- Deduplicate within `(symbol, batch_date, agg_trade_id)`.
+- Attach Silver audit columns: `_silver_at`, `_silver_run_id`.
+- Write Silver Delta via Delta `MERGE` keyed on `(symbol, batch_date, agg_trade_id)` so re-runs are idempotent (no duplicates, no double-counting).
+- Set `badRecordsPath` to `az://bad-records/silver/<run_id>/` so single malformed rows do not kill the job.
+- Apply Delta TBLPROPERTIES for governance (owner, domain, contains_pii=false, regulatory_basis=public_market_data).
+
+**Honest scoping note.** The first Silver iteration passes the storage account key as a Databricks Job parameter, which means the value is visible in Job run history. That is acceptable for a portfolio project and is documented as a known trade-off. A follow-up commit will replace this with either a Databricks Secret Scope synced from Infisical or an Azure AD service principal mounted on the workspace.

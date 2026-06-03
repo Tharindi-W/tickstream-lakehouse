@@ -56,6 +56,21 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-03 — Phase 3 planned
+
+Silver transform on Databricks Free Edition. Decisions locked here:
+
+- **Compute**: Databricks Free Edition (replaced Community Edition; has working Jobs REST API).
+- **Auth from GitHub Actions to Databricks**: bearer token (`DATABRICKS_TOKEN`) sourced from Infisical, never on a command line.
+- **Auth from Databricks to ADLS**: storage account key passed as a Databricks Job parameter for first iteration. Trade-off documented: visible in Job run history. Follow-up will replace with Databricks Secret Scope or Azure AD service principal.
+- **Transform language**: PySpark notebook source held in `pipeline/silver/transform_silver.py` in git, deployed to Databricks workspace via Workspace API on each push. The source of truth is git, never the workspace.
+- **Idempotency**: Delta `MERGE` keyed on `(symbol, batch_date, agg_trade_id)`. Re-runs do not duplicate rows. Replaces the Bronze partition-append pattern which only works because the hash check prevents re-ingest.
+- **Schema**: enforced StructType at read, explicit type casts in transform, schema-on-write enforcement at the target Delta table.
+- **DQ**: Soda Core declarative checks at `dq/soda_silver.yml`, run from a follow-up GitHub Actions step after the Databricks job succeeds. Reads Silver via deltalake-py (not Spark) since the runner is small. Alert fires if rejection rate above 5%.
+- **Bad records**: `badRecordsPath` set to `az://bad-records/silver/{run_id}/`. Single malformed rows do not kill the job.
+- **Orchestration**: `.github/workflows/ingest-silver-after-bronze.yml`. Triggered by `workflow_run` event when `ingest-bronze-hourly` completes successfully. Calls Databricks Jobs API `run-now` with `batch_date` and storage credential parameters.
+- **Governance**: Silver Delta gets TBLPROPERTIES (owner=Tharindi-W, domain=crypto_markets, data_source=binance_vision, contains_pii=false, regulatory_basis=public_market_data, refresh_cadence=hourly_dev_then_daily).
+
 ### 2026-06-03 — Phase 2 done
 
 Second Bronze run (after parser fix + key rotation + Infisical update) ingested all three symbols cleanly in 46 seconds of Python time (1m21s total wall clock including CLI install and dependency setup).
