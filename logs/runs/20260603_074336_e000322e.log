@@ -1,0 +1,48 @@
+# Pipeline run 20260603_074336_e000322e
+
+Started at (UTC): 2026-06-03T07:43:36.493203+00:00
+
+[07:43:36] Run id: 20260603_074336_e000322e
+[07:43:36] Symbols: BTCUSDT, ETHUSDT, SOLUSDT
+[07:43:36] Batch date (T-1 UTC): 2026-06-02
+[07:43:36] Bronze container: bronze
+
+## Symbol: BTCUSDT
+
+[07:43:36] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-06-02.zip
+[07:43:37] Downloading and hashing in memory...
+[07:43:39] Downloaded 23.3 MiB. sha256 prefix: 840ba4cbb1db
+[07:43:39] Uploading raw zip to az://bronze/raw/symbol=BTCUSDT/batch_date=2026-06-02/BTCUSDT-aggTrades-2026-06-02.zip
+[07:43:43] Parsing CSV from zip...
+[07:43:46] Parsed 1,677,042 rows, 8 columns
+[07:43:46] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[07:43:55] BTCUSDT done.
+
+## Symbol: ETHUSDT
+
+[07:43:55] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/ETHUSDT/ETHUSDT-aggTrades-2026-06-02.zip
+[07:43:56] Downloading and hashing in memory...
+[07:43:59] Downloaded 20.0 MiB. sha256 prefix: 4b289510091c
+[07:43:59] Uploading raw zip to az://bronze/raw/symbol=ETHUSDT/batch_date=2026-06-02/ETHUSDT-aggTrades-2026-06-02.zip
+[07:44:02] Parsing CSV from zip...
+[07:44:04] Parsed 1,380,545 rows, 8 columns
+[07:44:04] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[07:44:12] ETHUSDT done.
+
+## Symbol: SOLUSDT
+
+[07:44:12] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/SOLUSDT/SOLUSDT-aggTrades-2026-06-02.zip
+[07:44:12] Downloading and hashing in memory...
+[07:44:14] Downloaded 3.7 MiB. sha256 prefix: da9b9ab0397a
+[07:44:14] Uploading raw zip to az://bronze/raw/symbol=SOLUSDT/batch_date=2026-06-02/SOLUSDT-aggTrades-2026-06-02.zip
+[07:44:16] Parsing CSV from zip...
+[07:44:17] Parsed 219,980 rows, 8 columns
+[07:44:17] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[07:44:22] SOLUSDT done.
+
+## Result
+
+- Status: **SUCCESS**
+- Summary: processed=3, skipped_unchanged=0, missing_source=0, errors=0
+- Ended at (UTC): 2026-06-03T07:44:22.787985+00:00
+- Duration: 46.3 seconds
