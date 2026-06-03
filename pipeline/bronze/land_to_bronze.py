@@ -33,6 +33,7 @@ from io import BytesIO
 from zipfile import ZipFile
 
 import pandas as pd
+import requests
 
 from alerts.notifier import notify
 from ingestion.binance_vision import DailyFile, download, head_check
@@ -60,6 +61,23 @@ def _upload_raw_zip(
         overwrite=True,
         content_settings=ContentSettings(content_type="application/zip"),
     )
+
+
+def _upload_to_volume(host: str, token: str, volume_path: str, data: bytes) -> None:
+    """Upload bytes to a Databricks UC Volume path via the Files API.
+
+    Used on Free Edition where Spark cannot directly access our ADLS Gen2
+    via shared key. A copy of the Bronze parquet lives in the Volume so
+    Silver (PySpark on Free Edition Serverless) has something it is allowed
+    to read.
+    """
+    url = f"{host.rstrip('/')}/api/2.0/fs/files{volume_path}?overwrite=true"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/octet-stream",
+    }
+    r = requests.put(url, headers=headers, data=data, timeout=600)
+    r.raise_for_status()
 
 
 def _write_bronze_delta(
@@ -237,6 +255,29 @@ def main() -> int:
             df["_source_file_sha256"] = sha256
             df["_pipeline_run_id"] = log.run_id
             df["_ingested_at"] = now_iso
+
+            # Upload a parquet copy of the parsed Bronze data to the UC Volume.
+            # This is what Silver on Free Edition Serverless reads, since that
+            # tier cannot directly access our ADLS Gen2 via shared key (the
+            # fs.azure.* spark configs are denylisted on Spark Connect).
+            databricks_host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
+            databricks_token = os.environ.get("DATABRICKS_TOKEN", "")
+            if databricks_host and databricks_token:
+                volume_path = (
+                    f"/Volumes/workspace/default/tickstream_bronze"
+                    f"/symbol={symbol}/batch_date={target_date.isoformat()}"
+                    f"/agg_trades.parquet"
+                )
+                log.info(f"Uploading parquet copy to UC Volume {volume_path}")
+                # Drop the hive-partition columns since they live in the path,
+                # so Spark partition discovery on read does not clash.
+                parquet_df = df.drop(columns=["symbol", "batch_date"])
+                parquet_buf = BytesIO()
+                parquet_df.to_parquet(parquet_buf, index=False, compression="snappy")
+                _upload_to_volume(databricks_host, databricks_token, volume_path, parquet_buf.getvalue())
+                log.info(f"Volume upload done ({len(parquet_buf.getvalue()) / (1024 * 1024):.1f} MiB)")
+            else:
+                log.info("DATABRICKS_HOST/TOKEN not set, skipping UC Volume upload")
 
             delta_path = "delta/bronze_agg_trades"
             log.info(

@@ -110,8 +110,6 @@ jobs:
           SUBMIT_PAYLOAD=$(jq -n \
             --arg run_name "tickstream-$SILVER_RUN_ID" \
             --arg notebook_path "$NOTEBOOK_PATH" \
-            --arg storage_account "$AZURE_STORAGE_ACCOUNT_NAME" \
-            --arg storage_key "$AZURE_STORAGE_ACCESS_KEY" \
             --arg batch_date "$BATCH_DATE" \
             --arg silver_run_id "$SILVER_RUN_ID" \
             '{
@@ -121,10 +119,10 @@ jobs:
                 notebook_task: {
                   notebook_path: $notebook_path,
                   base_parameters: {
-                    storage_account: $storage_account,
-                    storage_key: $storage_key,
                     batch_date: $batch_date,
-                    silver_run_id: $silver_run_id
+                    silver_run_id: $silver_run_id,
+                    source_volume: "/Volumes/workspace/default/tickstream_bronze",
+                    target_table:  "workspace.default.silver_agg_trades"
                   }
                 },
                 environment_key: "default"
