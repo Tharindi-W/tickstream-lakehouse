@@ -1,0 +1,137 @@
+name: setup-uc-external-locations
+
+# One-off setup. Creates the Unity Catalog Storage Credential backed by the
+# Azure Access Connector, then creates one External Location per container.
+# Idempotent: if any of these already exist, the step is skipped.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    env:
+      ACCESS_CONNECTOR_ID: /subscriptions/2d153689-8eda-4deb-867a-c6adf77be234/resourceGroups/tickstream-rg/providers/Microsoft.Databricks/accessConnectors/tickstream-access-connector
+      STORAGE_CREDENTIAL_NAME: tickstream-credential
+    steps:
+      - name: Install Infisical CLI and jq
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical jq
+
+      - name: Create Storage Credential and External Locations
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > "$RUNNER_TEMP/secrets.env"
+          set -a
+          # shellcheck disable=SC1091
+          . "$RUNNER_TEMP/secrets.env"
+          set +a
+          rm -f "$RUNNER_TEMP/secrets.env"
+
+          : "${DATABRICKS_HOST:?}"
+          : "${DATABRICKS_TOKEN:?}"
+          : "${AZURE_STORAGE_ACCOUNT_NAME:?}"
+
+          echo "::add-mask::$DATABRICKS_HOST"
+          echo "::add-mask::$DATABRICKS_TOKEN"
+          echo "::add-mask::$AZURE_STORAGE_ACCOUNT_NAME"
+
+          DATABRICKS_HOST="${DATABRICKS_HOST%/}"
+          AUTH_HEADER="Authorization: Bearer $DATABRICKS_TOKEN"
+
+          # --- Step 1: Storage Credential ---
+          echo "Step 1: Storage Credential '$STORAGE_CREDENTIAL_NAME'"
+          EXISTING_CODE=$(curl -sS -o "$RUNNER_TEMP/sc.json" -w "%{http_code}" \
+            -H "$AUTH_HEADER" \
+            "$DATABRICKS_HOST/api/2.1/unity-catalog/storage-credentials/$STORAGE_CREDENTIAL_NAME")
+          if [ "$EXISTING_CODE" = "200" ]; then
+            echo "  already exists, skipping"
+          else
+            PAYLOAD=$(jq -n \
+              --arg name "$STORAGE_CREDENTIAL_NAME" \
+              --arg cid "$ACCESS_CONNECTOR_ID" \
+              '{
+                name: $name,
+                azure_managed_identity: { access_connector_id: $cid },
+                comment: "Tickstream Lakehouse access to ADLS Gen2 via managed identity"
+              }')
+            CREATE_CODE=$(curl -sS -o "$RUNNER_TEMP/sc.json" -w "%{http_code}" \
+              -H "$AUTH_HEADER" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              "$DATABRICKS_HOST/api/2.1/unity-catalog/storage-credentials")
+            if [ "$CREATE_CODE" != "200" ]; then
+              echo "  Failed to create credential. HTTP $CREATE_CODE"
+              jq . "$RUNNER_TEMP/sc.json" || cat "$RUNNER_TEMP/sc.json"
+              exit 1
+            fi
+            echo "  created"
+          fi
+
+          # --- Step 2: External Locations, one per container ---
+          echo ""
+          echo "Step 2: External Locations"
+          for CONTAINER in bronze silver gold bad-records; do
+            EL_NAME="tickstream-${CONTAINER}"
+            EL_URL="abfss://${CONTAINER}@${AZURE_STORAGE_ACCOUNT_NAME}.dfs.core.windows.net/"
+
+            EXISTING_CODE=$(curl -sS -o "$RUNNER_TEMP/el.json" -w "%{http_code}" \
+              -H "$AUTH_HEADER" \
+              "$DATABRICKS_HOST/api/2.1/unity-catalog/external-locations/$EL_NAME")
+            if [ "$EXISTING_CODE" = "200" ]; then
+              echo "  $EL_NAME : already exists, skipping"
+              continue
+            fi
+
+            PAYLOAD=$(jq -n \
+              --arg name "$EL_NAME" \
+              --arg url "$EL_URL" \
+              --arg cred "$STORAGE_CREDENTIAL_NAME" \
+              '{
+                name: $name,
+                url: $url,
+                credential_name: $cred,
+                comment: "Tickstream Lakehouse external location"
+              }')
+
+            CREATE_CODE=$(curl -sS -o "$RUNNER_TEMP/el.json" -w "%{http_code}" \
+              -H "$AUTH_HEADER" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              "$DATABRICKS_HOST/api/2.1/unity-catalog/external-locations")
+
+            if [ "$CREATE_CODE" = "200" ]; then
+              echo "  $EL_NAME : created ($EL_URL)"
+            else
+              echo "  $EL_NAME : FAILED HTTP $CREATE_CODE"
+              jq -c '{error_code, message}' "$RUNNER_TEMP/el.json" 2>/dev/null || cat "$RUNNER_TEMP/el.json"
+            fi
+          done
+
+          # --- Step 3: List final state for confirmation ---
+          echo ""
+          echo "Step 3: Final state"
+          curl -sS -H "$AUTH_HEADER" "$DATABRICKS_HOST/api/2.1/unity-catalog/external-locations" \
+            | jq -r '.external_locations[]? | "  \(.name) -> \(.url) (credential: \(.credential_name))"' \
+            2>/dev/null || true
