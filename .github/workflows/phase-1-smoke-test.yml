@@ -1,0 +1,78 @@
+name: phase-1-smoke-test
+
+# Manual-only. Proves the GitHub Actions -> Infisical -> operational secrets
+# chain works end to end, without leaking secret values to logs.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Infisical CLI
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical
+          infisical --version
+
+      - name: Log in to Infisical, fetch secrets, prove the chain
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          # Universal Auth machine identity login. --plain prints only the token,
+          # --silent suppresses the human-readable confirmation.
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          # Pull every secret in the dev environment, source it into the shell,
+          # then immediately delete the file.
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > /tmp/secrets.env
+          set -a
+          # shellcheck disable=SC1091
+          . /tmp/secrets.env
+          set +a
+          rm -f /tmp/secrets.env
+
+          # Fail loudly if anything expected is missing.
+          : "${AZURE_STORAGE_ACCOUNT_NAME:?missing AZURE_STORAGE_ACCOUNT_NAME in Infisical}"
+          : "${AZURE_STORAGE_ACCESS_KEY:?missing AZURE_STORAGE_ACCESS_KEY in Infisical}"
+          : "${ALERT_WEBHOOK_URL:?missing ALERT_WEBHOOK_URL in Infisical}"
+
+          # Mask each secret in subsequent log output. This is defensive: nothing
+          # below echoes the values, but if a future maintainer adds an echo by
+          # mistake, GitHub will replace the value with ***.
+          echo "::add-mask::$AZURE_STORAGE_ACCOUNT_NAME"
+          echo "::add-mask::$AZURE_STORAGE_ACCESS_KEY"
+          echo "::add-mask::$ALERT_WEBHOOK_URL"
+
+          echo "::group::Vault chain proof (values masked)"
+          echo "  AZURE_STORAGE_ACCOUNT_NAME prefix : ${AZURE_STORAGE_ACCOUNT_NAME:0:3}***"
+          echo "  AZURE_STORAGE_ACCESS_KEY  length : ${#AZURE_STORAGE_ACCESS_KEY} chars"
+          ALERT_HOST=$(echo "$ALERT_WEBHOOK_URL" | sed -E 's|^https?://([^/]+).*|\1|')
+          echo "  ALERT_WEBHOOK_URL         host  : $ALERT_HOST"
+          echo "::endgroup::"
+
+          # Real alert via ntfy as final proof.
+          curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+            -H "Title: TickStream Phase 1 smoke test" \
+            -H "Tags: white_check_mark" \
+            -d "Vault chain verified end to end at $(date -u +%Y-%m-%dT%H:%M:%SZ). GitHub Actions -> Infisical -> Azure + ntfy secrets all accessible." \
+            > /dev/null
+          echo "Sent test alert to ntfy."

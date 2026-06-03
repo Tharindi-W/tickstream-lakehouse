@@ -56,7 +56,21 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
-### 2026-06-03 — Phase 1 planned
+### 2026-06-03 — Phase 1 done
+
+Phase 1 executed today. Concrete state of the environment after this phase:
+
+- **Azure resource group**: `tickstream-rg` in `australiaeast`.
+- **Azure storage account**: name held in Infisical as `AZURE_STORAGE_ACCOUNT_NAME`, hierarchical namespace enabled, Standard LRS, public blob access disabled, minimum TLS 1.2.
+- **Containers**: `bronze`, `silver`, `gold`, `bad-records`, `archive` (all empty).
+- **Storage access key**: held in Infisical as `AZURE_STORAGE_ACCESS_KEY`. Never appeared in chat, never committed to git.
+- **Infisical project**: `tickstream-lakehouse`, env `dev`. Five secrets registered: `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCESS_KEY`, `ALERT_WEBHOOK_URL`, plus `DATABRICKS_HOST` and `DATABRICKS_TOKEN` placeholders (added in Phase 3).
+- **Infisical machine identity**: `github-actions-ingest`, Universal Auth, Viewer role on the project.
+- **Alerts**: ntfy.sh public topic substituted for Discord because the owner did not want yet another desktop app to install. Documented trade-off: ntfy public topics are obscurity-secured; for real production, self-host ntfy or use a properly authenticated webhook. Secret renamed `DISCORD_WEBHOOK_URL` → `ALERT_WEBHOOK_URL` to keep the variable name provider-agnostic. `config/pipeline.yml` and `config/secrets_required.md` updated accordingly.
+- **GitHub Actions Secrets** (bootstrap only): `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`. Pushed via `gh secret set` without values ever appearing in chat. Verified via `gh secret list`.
+- **Smoke test**: `.github/workflows/phase-1-smoke-test.yml` runs on manual dispatch. Installs Infisical CLI, logs in via Universal Auth, fetches all dev secrets, prints proof of chain without leaking values (lengths and prefixes only), and posts a real test alert to ntfy.
+
+### 2026-06-03 — Phase 1 planned (original entry, kept for reference)
 
 Four external accounts will be wired up before any pipeline code is written. Click-by-click guide lives in `LEARNING.md`. Decisions locked in here:
 

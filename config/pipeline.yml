@@ -37,8 +37,9 @@ schedule:
   reset_after_days: 7
 
 alerts:
-  discord_webhook_secret: DISCORD_WEBHOOK_URL  # name of the secret in Infisical
-  channel: pipeline-alerts
+  webhook_secret_name: ALERT_WEBHOOK_URL  # name of the secret in Infisical that holds the alerting webhook URL
+  provider: ntfy                          # ntfy, discord, slack — affects message format only
+  topic_or_channel: tickstream-alerts     # informational, the actual destination is encoded in the webhook URL
 
 governance:
   data_source: binance_vision

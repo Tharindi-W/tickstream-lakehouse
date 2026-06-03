@@ -165,3 +165,24 @@ This is the one and only place a secret is stored in GitHub Actions Secrets. Eve
 **Verify.** When you tell me Phase 1 is done, I will write a tiny GitHub Actions workflow that runs the Infisical CLI, fetches `AZURE_STORAGE_ACCOUNT_NAME`, and prints just the first three characters of it (so we prove the vault chain works without leaking the secret). That is our smoke test for Phase 1.
 
 **Key idea.** Every secret has exactly one home. Infisical for operational secrets, GitHub for the bootstrap. No copy-pasting between systems, no `.env` files in chat, no Slack DMs of credentials. This is the property an auditor checks for.
+
+#### Phase 1 — what actually happened (2026-06-03)
+
+The plan above is the clean version. Reality had small variations worth recording.
+
+- **Infisical UI changed.** The guide said "Create Project". The current UI shows an Org Overview with tiles. The path is **Org Overview → Secrets Management tile → Create Project**. Updated mental model: Infisical the company has expanded into KMS, Certificate Manager, PAM. Secrets Management is now one product among several.
+- **Discord replaced with ntfy.sh.** The owner did not want yet another desktop app. Switched to ntfy.sh: zero account, zero install, just pick a hard-to-guess topic and POST to it. The secret name in Infisical was renamed `DISCORD_WEBHOOK_URL` → `ALERT_WEBHOOK_URL` so future swaps to Slack or self-hosted webhooks do not need code changes. Trade-off documented in `HANDOVER.md`: ntfy public topics are obscurity-secured.
+- **Azure resource provider registration.** First storage account creation attempt failed with `SubscriptionNotFound`. Real cause: `Microsoft.Storage` was `NotRegistered` on the fresh subscription. Fix: `az provider register --namespace Microsoft.Storage` then poll until state is `Registered` (about 30 seconds). This is a common gotcha on new Azure subscriptions and the error message is misleading.
+- **Project-level Machine Identity creation.** Infisical now offers a combined "Create New / Assign Existing" dialog at the project level which creates the identity AND assigns it to the project with a role in one shot. Faster than the org-level path.
+
+#### The pattern you just learned
+
+Real teams do not put every secret in CI Secrets. They put exactly one bootstrap identity in CI and a real vault holds everything else. If CI is compromised, the blast radius is "attacker can pretend to be the CI runner against the vault" rather than "attacker has Azure storage keys outright". The vault can then revoke that one identity to cut the chain.
+
+#### The smoke test
+
+`.github/workflows/phase-1-smoke-test.yml` runs on manual dispatch. It installs the Infisical CLI, logs in with the machine identity, fetches the dev secrets, masks them in logs via the `::add-mask::` directive, prints proof of the chain (lengths and host prefixes only), and POSTs a real notification to your ntfy topic. If both the workflow shows green and the ntfy notification arrives, the entire Phase 1 plumbing is verified.
+
+### Phase 2 — coming next
+
+Bronze ingestion. We write a Python ingester that downloads Binance Vision aggTrades for the three symbols, hashes each file with SHA-256, lands it raw in `bronze/`, writes one plain-English run log per execution, fires the missing-source-file alert if the source endpoint is unreachable, and stores everything in a Delta table with audit columns. All wired into the same vault chain you just built.

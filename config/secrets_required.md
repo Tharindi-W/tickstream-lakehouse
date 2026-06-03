@@ -31,7 +31,7 @@ Stored at https://app.infisical.com/project/{INFISICAL_PROJECT_ID}/secrets
 | `AZURE_STORAGE_ACCESS_KEY` | Account-level key for ADLS Gen2 | Every pipeline run | HIGH. Full read/write on every container in the account. Rotate via Azure portal → Access keys → Rotate. |
 | `DATABRICKS_HOST` | URL of the Databricks workspace | Phase 3 onwards | Low (public-ish) |
 | `DATABRICKS_TOKEN` | Personal access token for Databricks Jobs API | Phase 3 onwards | HIGH. Full workspace access. Rotate in Databricks → User Settings → Developer → Access tokens. |
-| `DISCORD_WEBHOOK_URL` | Webhook for the `#pipeline-alerts` channel | Every pipeline run that needs to alert | LOW. Spam risk only. Rotate by deleting the webhook in Discord and creating a new one. |
+| `ALERT_WEBHOOK_URL` | Webhook URL for the alerts destination (currently ntfy.sh topic) | Every pipeline run that needs to alert | LOW. Spam risk only. Rotate by picking a new ntfy topic and updating the secret. |
 
 ## Rotation policy
 
@@ -40,7 +40,7 @@ Stored at https://app.infisical.com/project/{INFISICAL_PROJECT_ID}/secrets
 | `INFISICAL_CLIENT_SECRET` | Every 90 days, or immediately on team change | Calendar reminder or owner change |
 | `AZURE_STORAGE_ACCESS_KEY` | Every 90 days | Calendar reminder |
 | `DATABRICKS_TOKEN` | Every 90 days | Calendar reminder |
-| `DISCORD_WEBHOOK_URL` | Only on suspected leak | Webhook 404s in workflow logs |
+| `ALERT_WEBHOOK_URL` | Only on suspected abuse or topic guess | Spam from unknown senders |
 
 ## What is NOT in this registry, and why
 
