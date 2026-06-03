@@ -1,0 +1,48 @@
+# Pipeline run 20260603_064326_367740a3
+
+Started at (UTC): 2026-06-03T06:43:26.063214+00:00
+
+[06:43:26] Run id: 20260603_064326_367740a3
+[06:43:26] Symbols: BTCUSDT, ETHUSDT, SOLUSDT
+[06:43:26] Batch date (T-1 UTC): 2026-06-02
+[06:43:26] Bronze container: bronze
+
+## Symbol: BTCUSDT
+
+[06:43:26] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-06-02.zip
+[06:43:26] Downloading and hashing in memory...
+[06:43:29] Downloaded 23.3 MiB. sha256 prefix: 840ba4cbb1db
+[06:43:29] Uploading raw zip to az://bronze/raw/symbol=BTCUSDT/batch_date=2026-06-02/BTCUSDT-aggTrades-2026-06-02.zip
+[06:43:37] Parsing CSV from zip...
+[06:43:40] Parsed 1,677,041 rows, 8 columns
+[06:43:40] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[06:43:50] BTCUSDT done.
+
+## Symbol: ETHUSDT
+
+[06:43:50] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/ETHUSDT/ETHUSDT-aggTrades-2026-06-02.zip
+[06:43:50] Downloading and hashing in memory...
+[06:43:53] Downloaded 20.0 MiB. sha256 prefix: 4b289510091c
+[06:43:53] Uploading raw zip to az://bronze/raw/symbol=ETHUSDT/batch_date=2026-06-02/ETHUSDT-aggTrades-2026-06-02.zip
+[06:43:56] Parsing CSV from zip...
+[06:43:58] Parsed 1,380,544 rows, 8 columns
+[06:43:58] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[06:44:00] ERROR processing ETHUSDT: SchemaMismatchError: Field 1999085122 not found in schema
+
+## Symbol: SOLUSDT
+
+[06:44:01] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/SOLUSDT/SOLUSDT-aggTrades-2026-06-02.zip
+[06:44:01] Downloading and hashing in memory...
+[06:44:03] Downloaded 3.7 MiB. sha256 prefix: da9b9ab0397a
+[06:44:03] Uploading raw zip to az://bronze/raw/symbol=SOLUSDT/batch_date=2026-06-02/SOLUSDT-aggTrades-2026-06-02.zip
+[06:44:06] Parsing CSV from zip...
+[06:44:06] Parsed 219,979 rows, 8 columns
+[06:44:06] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[06:44:08] ERROR processing SOLUSDT: SchemaMismatchError: Field 656595811 not found in schema
+
+## Result
+
+- Status: **PARTIAL**
+- Summary: processed=1, skipped_unchanged=0, missing_source=0, errors=2
+- Ended at (UTC): 2026-06-03T06:44:08.320015+00:00
+- Duration: 42.3 seconds
