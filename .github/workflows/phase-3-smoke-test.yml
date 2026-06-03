@@ -1,0 +1,92 @@
+name: phase-3-smoke-test
+
+# Manual-only. Proves the vault chain extended to Databricks works end to end.
+# Fetches DATABRICKS_HOST and DATABRICKS_TOKEN from Infisical, calls the
+# Databricks Jobs API with the token, expects a 200, then pings ntfy.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Infisical CLI
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical
+          infisical --version
+
+      - name: Fetch secrets and call Databricks
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > "$RUNNER_TEMP/secrets.env"
+          set -a
+          # shellcheck disable=SC1091
+          . "$RUNNER_TEMP/secrets.env"
+          set +a
+          rm -f "$RUNNER_TEMP/secrets.env"
+
+          : "${DATABRICKS_HOST:?missing in vault}"
+          : "${DATABRICKS_TOKEN:?missing in vault}"
+          : "${ALERT_WEBHOOK_URL:?missing in vault}"
+
+          # Mask sensitive values in logs
+          echo "::add-mask::$DATABRICKS_HOST"
+          echo "::add-mask::$DATABRICKS_TOKEN"
+          echo "::add-mask::$ALERT_WEBHOOK_URL"
+
+          # Strip trailing slash and protocol-only versions of the host
+          DATABRICKS_HOST="${DATABRICKS_HOST%/}"
+          # Derive a non-sensitive display string: drop https:// and the
+          # workspace-id prefix, leaving only the cloud.databricks.com suffix.
+          DATABRICKS_HOST_SUFFIX=$(echo "$DATABRICKS_HOST" | sed -E 's|^https?://[^.]+\.||')
+
+          # Call jobs/list. The token must have at least the `jobs` API scope.
+          HTTP_CODE=$(curl -sS -o "$RUNNER_TEMP/resp.json" -w "%{http_code}" \
+            -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            "$DATABRICKS_HOST/api/2.1/jobs/list?limit=1")
+
+          echo "::group::Databricks API smoke result"
+          echo "  Host suffix: $DATABRICKS_HOST_SUFFIX"
+          echo "  HTTP status: $HTTP_CODE"
+          if command -v jq > /dev/null; then
+            echo "  Response keys: $(jq -c 'keys // []' "$RUNNER_TEMP/resp.json" 2>/dev/null || echo '[]')"
+          fi
+          echo "::endgroup::"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Databricks API call failed (status $HTTP_CODE)."
+            # Print response body for debugging (token not echoed back by Databricks)
+            cat "$RUNNER_TEMP/resp.json"
+            exit 1
+          fi
+
+          rm -f "$RUNNER_TEMP/resp.json"
+
+          curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+            -H "Title: TickStream Phase 3 smoke test" \
+            -H "Tags: white_check_mark" \
+            -d "Databricks token works. GitHub Actions -> Infisical -> Databricks ($DATABRICKS_HOST_SUFFIX) Jobs API responded 200 at $(date -u +%Y-%m-%dT%H:%M:%SZ)." \
+            > /dev/null
+          echo "Confirmation sent to ntfy."
