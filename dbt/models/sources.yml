@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: silver
+    catalog: workspace
+    schema:  default
+    description: "Silver-layer Delta tables managed by Unity Catalog"
+    tables:
+      - name: silver_agg_trades
+        description: "Per-trade aggregated rows from Binance Vision, type-cast, validated, deduped, and audit-stamped by the Silver notebook."
+        columns:
+          - name: symbol
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+          - name: agg_trade_id
+            tests:
+              - not_null
+          - name: batch_date
+            tests:
+              - not_null
+          - name: is_valid
+            tests:
+              - not_null

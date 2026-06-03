@@ -1,0 +1,25 @@
+name: 'tickstream'
+version: '1.0.0'
+config-version: 2
+
+profile: 'tickstream'
+
+model-paths:    ["models"]
+analysis-paths: ["analyses"]
+test-paths:     ["tests"]
+seed-paths:     ["seeds"]
+macro-paths:    ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# All Gold models materialise as managed Delta tables in the workspace catalog
+# default schema, so they land alongside Silver and are queryable from
+# Databricks SQL with no extra config.
+models:
+  tickstream:
+    +materialized: table
+    +file_format: delta

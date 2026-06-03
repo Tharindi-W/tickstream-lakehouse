@@ -1,0 +1,137 @@
+name: gold-dbt
+
+# Builds and tests the Gold dbt models against the Databricks SQL warehouse.
+# Auto-discovers a warehouse via the Databricks SQL API, starts it if it is
+# in STOPPED state, then runs `dbt build` (run + test) and reports to ntfy.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gold-dbt
+  cancel-in-progress: false
+
+jobs:
+  gold:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Infisical CLI and jq
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical jq
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dbt-databricks
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'dbt-databricks>=1.8,<2.0'
+          dbt --version
+
+      - name: Fetch secrets, discover SQL warehouse, run dbt build
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > "$RUNNER_TEMP/secrets.env"
+          set -a
+          # shellcheck disable=SC1091
+          . "$RUNNER_TEMP/secrets.env"
+          set +a
+          rm -f "$RUNNER_TEMP/secrets.env"
+
+          : "${DATABRICKS_HOST:?}"
+          : "${DATABRICKS_TOKEN:?}"
+          : "${ALERT_WEBHOOK_URL:?}"
+
+          echo "::add-mask::$DATABRICKS_HOST"
+          echo "::add-mask::$DATABRICKS_TOKEN"
+          echo "::add-mask::$ALERT_WEBHOOK_URL"
+
+          DATABRICKS_HOST_TRIMMED="${DATABRICKS_HOST%/}"
+          # dbt-databricks `host` wants the bare workspace hostname, no scheme.
+          DATABRICKS_HOST_BARE=$(echo "$DATABRICKS_HOST_TRIMMED" | sed -E 's|^https?://||')
+          export DATABRICKS_HOST_BARE
+          echo "::add-mask::$DATABRICKS_HOST_BARE"
+
+          # Discover a SQL warehouse. Free Edition has a default Serverless
+          # warehouse; we use the first one returned.
+          curl -sS -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            "$DATABRICKS_HOST_TRIMMED/api/2.0/sql/warehouses" > "$RUNNER_TEMP/warehouses.json"
+          WAREHOUSE_ID=$(jq -r '.warehouses[0].id // empty' "$RUNNER_TEMP/warehouses.json")
+          WAREHOUSE_NAME=$(jq -r '.warehouses[0].name // "unknown"' "$RUNNER_TEMP/warehouses.json")
+          WAREHOUSE_STATE=$(jq -r '.warehouses[0].state // "UNKNOWN"' "$RUNNER_TEMP/warehouses.json")
+
+          if [ -z "$WAREHOUSE_ID" ]; then
+            echo "No SQL warehouse available on this workspace."
+            jq . "$RUNNER_TEMP/warehouses.json"
+            curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+              -H "Title: TickStream Gold dbt FAILED" -H "Tags: rotating_light" \
+              -d "No SQL warehouse available in Databricks. Cannot run Gold dbt build." > /dev/null
+            exit 1
+          fi
+
+          echo "Warehouse: ${WAREHOUSE_NAME} (id ${WAREHOUSE_ID}, state ${WAREHOUSE_STATE})"
+
+          # Start the warehouse if it is not RUNNING, and poll until it is.
+          if [ "$WAREHOUSE_STATE" != "RUNNING" ]; then
+            echo "Starting warehouse..."
+            curl -sS -X POST -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+              "$DATABRICKS_HOST_TRIMMED/api/2.0/sql/warehouses/$WAREHOUSE_ID/start" > /dev/null || true
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              sleep 15
+              STATE=$(curl -sS -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+                "$DATABRICKS_HOST_TRIMMED/api/2.0/sql/warehouses/$WAREHOUSE_ID" | jq -r '.state')
+              echo "  [attempt $attempt] state=$STATE"
+              [ "$STATE" = "RUNNING" ] && break
+            done
+          fi
+
+          export DATABRICKS_HTTP_PATH="/sql/1.0/warehouses/$WAREHOUSE_ID"
+
+          cd dbt
+
+          echo "::group::dbt debug"
+          dbt debug --profiles-dir . --target dev
+          echo "::endgroup::"
+
+          echo "::group::dbt build (run + test)"
+          dbt build --profiles-dir . --target dev
+          echo "::endgroup::"
+
+          # Send success alert with row counts read from dbt's run results
+          ROWS=$(jq -r '
+            [.results[]
+             | select(.unique_id | startswith("model.tickstream."))
+             | "\(.unique_id | sub("model.tickstream."; ""))=\(.adapter_response.rows_affected // 0)"]
+            | join(", ")' target/run_results.json 2>/dev/null || echo "see logs")
+
+          curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+            -H "Title: TickStream Gold dbt SUCCESS" -H "Tags: white_check_mark" \
+            -d "Gold dbt build + tests passed at $(date -u +%Y-%m-%dT%H:%M:%SZ). Rows: ${ROWS}" > /dev/null
+          echo "Sent success alert to ntfy."

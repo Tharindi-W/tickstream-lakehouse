@@ -1,0 +1,59 @@
+version: 2
+
+models:
+  - name: gold_ohlcv_daily
+    description: "Daily OHLCV per (symbol, batch_date) with VWAP, volume, notional, trade count."
+    columns:
+      - name: symbol
+        description: "Trading pair symbol."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+      - name: batch_date
+        description: "UTC date of the batch this row covers."
+        tests:
+          - not_null
+      - name: open_price
+        tests: [not_null]
+      - name: high_price
+        tests: [not_null]
+      - name: low_price
+        tests: [not_null]
+      - name: close_price
+        tests: [not_null]
+      - name: volume
+        tests: [not_null]
+      - name: notional
+        tests: [not_null]
+      - name: trade_count
+        tests: [not_null]
+      - name: vwap
+        description: "Volume-weighted average price = notional / volume."
+
+  - name: gold_ohlcv_hourly
+    description: "Hourly OHLCV per (symbol, batch_date, hour_bucket)."
+    columns:
+      - name: symbol
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+      - name: batch_date
+        tests: [not_null]
+      - name: hour_bucket
+        tests: [not_null]
+      - name: open_price
+        tests: [not_null]
+      - name: close_price
+        tests: [not_null]
+
+  - name: gold_symbol_summary
+    description: "Per-symbol rollup across all observed days. Materialised as a view."
+    columns:
+      - name: symbol
+        tests:
+          - unique
+          - not_null
+      - name: days_observed
+        tests: [not_null]
