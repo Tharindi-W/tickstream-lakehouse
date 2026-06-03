@@ -127,9 +127,11 @@ else:
 # COMMAND ----------
 # Governance properties. These are queryable in the catalog and serve as a
 # lightweight in-product data dictionary.
+# NOTE: `owner` is a reserved TBLPROPERTIES key on Databricks UC; it is
+# always set to the current user automatically by the catalog. We keep
+# our governance metadata under custom keys.
 spark.sql(f"""
 ALTER TABLE {target_table} SET TBLPROPERTIES (
-    'owner'            = 'Tharindi-W',
     'domain'           = 'crypto_markets',
     'data_source'      = 'binance_vision',
     'contains_pii'     = 'false',
