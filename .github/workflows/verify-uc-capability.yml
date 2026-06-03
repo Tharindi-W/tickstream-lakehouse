@@ -1,0 +1,100 @@
+name: verify-uc-capability
+
+# One-off probe to determine whether this Databricks Free Edition workspace
+# allows Unity Catalog Storage Credentials and External Locations to be
+# created. Reports the answer cleanly so we can decide between Phase 3
+# Path C (real UC external location to ADLS) and Path B (UC Volume copy).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Infisical CLI and jq
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical jq
+
+      - name: Ask Databricks four questions
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > "$RUNNER_TEMP/secrets.env"
+          set -a; . "$RUNNER_TEMP/secrets.env"; set +a
+          rm -f "$RUNNER_TEMP/secrets.env"
+
+          : "${DATABRICKS_HOST:?missing}"
+          : "${DATABRICKS_TOKEN:?missing}"
+
+          echo "::add-mask::$DATABRICKS_HOST"
+          echo "::add-mask::$DATABRICKS_TOKEN"
+
+          DATABRICKS_HOST="${DATABRICKS_HOST%/}"
+
+          probe() {
+            local path="$1"
+            local label="$2"
+            local code
+            code=$(curl -sS -o "$RUNNER_TEMP/probe.json" -w "%{http_code}" \
+              -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+              "$DATABRICKS_HOST$path")
+            echo "::group::$label  ($path)"
+            echo "  HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "  Shape: $(jq -c 'keys' "$RUNNER_TEMP/probe.json" 2>/dev/null || echo unknown)"
+            else
+              # Print the error message Databricks returns. These are short
+              # and never contain the token.
+              jq -c '{error_code, message}' "$RUNNER_TEMP/probe.json" 2>/dev/null || cat "$RUNNER_TEMP/probe.json"
+            fi
+            echo "::endgroup::"
+            # Return the http code via stdout
+            echo "$code"
+          }
+
+          echo "Probing UC capabilities..."
+
+          # Q1: Is a metastore attached at all? Without one, UC ops are not possible.
+          C1=$(probe "/api/2.1/unity-catalog/metastores"           "Q1: list metastores")
+          # Q2: Can we list storage credentials? 200 = yes, 403 = blocked.
+          C2=$(probe "/api/2.1/unity-catalog/storage-credentials"  "Q2: list storage credentials")
+          # Q3: Can we list external locations?
+          C3=$(probe "/api/2.1/unity-catalog/external-locations"   "Q3: list external locations")
+          # Q4: What catalogs already exist (sanity check)?
+          C4=$(probe "/api/2.1/unity-catalog/catalogs?max_results=5" "Q4: list catalogs")
+
+          echo ""
+          echo "============================================================"
+          echo "Capability summary"
+          echo "  Metastore reachable       : $C1"
+          echo "  Storage credentials list  : $C2"
+          echo "  External locations list   : $C3"
+          echo "  Catalogs list             : $C4"
+          echo "============================================================"
+
+          if [ "$C1" = "200" ] && [ "$C2" = "200" ] && [ "$C3" = "200" ]; then
+            echo "RESULT: Path C (UC External Location) is viable on this workspace."
+          else
+            echo "RESULT: Path C may be restricted. Falling back to Path B (UC Volume copy) would be safer."
+          fi
