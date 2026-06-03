@@ -1,0 +1,36 @@
+# Pipeline run 20260603_115827_19f828d0
+
+Started at (UTC): 2026-06-03T11:58:27.658141+00:00
+
+[11:58:27] Run id: 20260603_115827_19f828d0
+[11:58:27] Symbols: BTCUSDT, ETHUSDT, SOLUSDT
+[11:58:27] Batch date (T-1 UTC): 2026-06-02
+[11:58:27] Bronze container: bronze
+
+## Symbol: BTCUSDT
+
+[11:58:27] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-06-02.zip
+[11:58:28] Downloading and hashing in memory...
+[11:58:30] Downloaded 23.3 MiB. sha256 prefix: 840ba4cbb1db
+[11:58:30] Hash unchanged since 2026-06-02 (prior ingest at 2026-06-03T07:43:46.844446+00:00). Skipping.
+
+## Symbol: ETHUSDT
+
+[11:58:30] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/ETHUSDT/ETHUSDT-aggTrades-2026-06-02.zip
+[11:58:30] Downloading and hashing in memory...
+[11:58:31] Downloaded 20.0 MiB. sha256 prefix: 4b289510091c
+[11:58:31] Hash unchanged since 2026-06-02 (prior ingest at 2026-06-03T07:44:04.769186+00:00). Skipping.
+
+## Symbol: SOLUSDT
+
+[11:58:31] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/SOLUSDT/SOLUSDT-aggTrades-2026-06-02.zip
+[11:58:32] Downloading and hashing in memory...
+[11:58:33] Downloaded 3.7 MiB. sha256 prefix: da9b9ab0397a
+[11:58:33] Hash unchanged since 2026-06-02 (prior ingest at 2026-06-03T07:44:17.395383+00:00). Skipping.
+
+## Result
+
+- Status: **SKIPPED**
+- Summary: processed=0, skipped_unchanged=3, missing_source=0, errors=0
+- Ended at (UTC): 2026-06-03T11:58:33.489192+00:00
+- Duration: 5.8 seconds
