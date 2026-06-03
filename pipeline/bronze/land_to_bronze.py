@@ -90,18 +90,70 @@ def _write_bronze_delta(
     )
 
 
+# Canonical 8-column schema for Binance aggTrades. Older files may have 7
+# columns (no is_best_match). We always normalise the parsed DataFrame to
+# this full set so the Bronze Delta schema is stable across symbols and dates.
+COLUMNS_FULL = [
+    "agg_trade_id",
+    "price",
+    "quantity",
+    "first_trade_id",
+    "last_trade_id",
+    "transact_time",
+    "is_buyer_maker",
+    "is_best_match",
+]
+
+
 def _parse_csv_from_zip(zip_bytes: bytes) -> pd.DataFrame:
     """Extract the single CSV inside a Binance daily aggTrades zip.
 
-    Read everything as string so Bronze preserves source fidelity. Silver
-    does the type casting and schema enforcement.
+    Binance Vision is inconsistent: BTCUSDT files ship with a header row, but
+    several other symbols do not. If we let pandas guess a header, the first
+    data row becomes the column names and every symbol ends up with a different
+    schema. We detect header presence by looking at the first cell and always
+    return a DataFrame with the same canonical 8-column schema.
+
+    Everything is read as string. Silver does the type casting.
     """
     with ZipFile(BytesIO(zip_bytes)) as zf:
         csv_names = [n for n in zf.namelist() if n.endswith(".csv")]
         if not csv_names:
             raise ValueError("zip contains no .csv file")
         with zf.open(csv_names[0]) as f:
-            return pd.read_csv(f, dtype=str)
+            data = f.read()
+
+    # First non-empty line tells us column count and whether there's a header.
+    first_line = b""
+    for line in data.split(b"\n"):
+        line = line.strip()
+        if line:
+            first_line = line
+            break
+    cells = first_line.decode("utf-8", errors="replace").split(",")
+    n_cols = len(cells)
+    first_cell = cells[0].strip().strip('"')
+
+    try:
+        int(first_cell)
+        has_header = False
+    except ValueError:
+        has_header = True
+
+    columns = COLUMNS_FULL[:n_cols]
+    df = pd.read_csv(
+        BytesIO(data),
+        dtype=str,
+        header=None,
+        names=columns,
+        skiprows=1 if has_header else 0,
+    )
+
+    # Pad any missing canonical columns so the Bronze Delta schema is stable.
+    for col in COLUMNS_FULL:
+        if col not in df.columns:
+            df[col] = pd.NA
+    return df[COLUMNS_FULL]
 
 
 def main() -> int:

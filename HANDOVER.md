@@ -56,6 +56,36 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-03 — Phase 2 first run + security incident + parser fix
+
+**What we tried.** First Bronze ingestion run with the three configured symbols. The workflow itself returned green at the GitHub Actions level because BTCUSDT succeeded. ETHUSDT and SOLUSDT failed with `deltalake.SchemaMismatchError: Field <numeric_id> not found in schema`.
+
+**Root cause of the data error.** Binance Vision is inconsistent across symbols. BTCUSDT's daily aggTrades CSV ships with a header row (`agg_trade_id,price,...`), but ETHUSDT and SOLUSDT do not. pandas with default `header=0` inferred the first numeric data row as column names for those two, producing schemas like `1999085122,...` that did not match the Delta table created by BTCUSDT. Fixed in `pipeline/bronze/land_to_bronze.py::_parse_csv_from_zip`: detect header by checking if the first cell parses as an integer, always normalise to canonical 8-column schema regardless of source format.
+
+**Security incident — Azure storage key leaked twice during cleanup.**
+
+1. First leak: while trying to wipe the half-written bronze container with `az storage blob delete-batch ... --account-key <value>`, a subsequent `az storage blob list --query "length(@)" -o tsv` triggered an internal az exception that dumped `sys.argv` (including the `--account-key=<value>` argument) to its stdout. The captured stdout was then `Write-Output`-ed by the wrapping PowerShell command, putting the live key into the conversation transcript.
+2. Second leak: same mechanism after the first rotation, because I re-used the same `--query length(@)` pattern with the newly-rotated key.
+
+Both leaks were responded to within seconds:
+
+- Rotated the storage account keys via `az storage account keys renew` (management plane operation, AAD-authenticated, no `--account-key` argument so no leak path).
+- Bronze container wiped fresh with the third-generation key, this time using `azure-storage-file-datalake` Python SDK because ADLS Gen2's hierarchical namespace rejects non-recursive blob deletes on directories.
+
+**Permanent fix to prevent recurrence.**
+
+- Never pass `--account-key` as a CLI argument again. Use the `AZURE_STORAGE_KEY` environment variable so the key is never on a command line and so never appears in any `sys.argv` dump from a CLI subcommand.
+- For local admin tasks, prefer the Python SDK over `az` CLI on Windows because PowerShell 5.1 wraps native command stderr and can echo it to host output even when redirected.
+- Container is hierarchical-namespace enabled, so any "wipe" needs `DataLakeServiceClient`, not `BlobServiceClient`.
+
+**Operational state after incident.**
+
+- Storage account keys rotated three times. Current valid key is in Infisical only after the owner re-pastes it from the local file `.tickstream-rotated-key.txt`.
+- Bronze container empty.
+- `state/last_seen_hashes.json` still `{}` so next run will re-ingest all three symbols cleanly.
+- No data lost (no Silver or Gold yet, Bronze was the first writer).
+- Parser fix committed.
+
 ### 2026-06-03 — Phase 1 done
 
 Phase 1 executed today. Concrete state of the environment after this phase:

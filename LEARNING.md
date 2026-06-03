@@ -183,6 +183,45 @@ Real teams do not put every secret in CI Secrets. They put exactly one bootstrap
 
 `.github/workflows/phase-1-smoke-test.yml` runs on manual dispatch. It installs the Infisical CLI, logs in with the machine identity, fetches the dev secrets, masks them in logs via the `::add-mask::` directive, prints proof of the chain (lengths and host prefixes only), and POSTs a real notification to your ntfy topic. If both the workflow shows green and the ntfy notification arrives, the entire Phase 1 plumbing is verified.
 
-### Phase 2 — coming next
+### Phase 2 — first run, two leaks, real lessons (2026-06-03)
 
-Bronze ingestion. We write a Python ingester that downloads Binance Vision aggTrades for the three symbols, hashes each file with SHA-256, lands it raw in `bronze/`, writes one plain-English run log per execution, fires the missing-source-file alert if the source endpoint is unreachable, and stores everything in a Delta table with audit columns. All wired into the same vault chain you just built.
+The first Bronze run did its job at the GitHub Actions level (green tick in 1m25s) but Python inside ran into two distinct kinds of failure worth recording here in plain English, because both are the kind of thing that bites real teams in real projects.
+
+**Lesson 1 — public data is messy.**
+
+Binance Vision is FREE and PUBLIC, which means there is no SLA on its CSV format. We assumed every symbol's daily aggTrades file would have a header row. BTCUSDT does. ETHUSDT and SOLUSDT do not. Our parser used `pd.read_csv` with default `header=0`, so for ETHUSDT the first row of actual trade data became the "column names". Delta's schema check (correctly) refused to append rows whose columns were `1999085122, 0.0234, ...` to a table whose columns were `agg_trade_id, price, ...`.
+
+The fix in `pipeline/bronze/land_to_bronze.py` is the kind of thing you see in real production: peek at the first cell, if it parses as an integer treat the file as headerless and apply a canonical schema; otherwise skip the header row and apply the same canonical schema. Either way the DataFrame leaves the parser with the same 8 columns in the same order. The Delta table sees a stable schema regardless of which symbol it came from.
+
+The take-away: when you ingest someone else's data, never let pandas guess your schema. Always assert it.
+
+**Lesson 2 — your shell can leak your secrets.**
+
+While cleaning up the half-written Bronze data, the Azure CLI's `--account-key=<value>` argument got dumped into the conversation transcript twice in a row.
+
+Mechanism: when az has an internal exception (here, parsing the JMESPath query `length(@)`), it dumps a Python traceback to stdout. The traceback includes `sys.argv`. `sys.argv` includes every argument passed to az, which includes `--account-key=<base64-value>`. PowerShell 5.1 then takes the captured stdout, treats it as a NativeCommandError, and echoes it to host output regardless of `2>$null` or `Out-Null` because it does the wrapping at a higher level than the redirect.
+
+The fix:
+
+- For data plane operations, use the `AZURE_STORAGE_KEY` env var instead of `--account-key`. Environment variables are not in `sys.argv` and so cannot leak through a traceback.
+- On Windows specifically, prefer the Python SDK for any operation that handles a secret. `azure-storage-file-datalake` accepts the key as a constructor argument; nothing inside the Python process will ever serialise it.
+- If you must use the CLI for a sensitive operation, use `--auth-mode login` with an AAD identity that has the right RBAC. Then there is no key on the command line at all.
+
+The fact that this caused two leaks and three key rotations in the space of a few minutes is exactly how it goes in the real world. The lesson is not "be more careful" — humans cannot be relied upon to remember stderr-wrapping quirks under pressure. The lesson is to remove the surface area: use env vars and SDKs, never pass secrets as CLI flags.
+
+**Lesson 3 — ADLS Gen2 hierarchical namespace is not Blob storage.**
+
+When we tried to wipe Bronze with the standard `azure-storage-blob` SDK, it failed on the first non-empty "directory" with `DirectoryIsNotEmpty`. ADLS Gen2 with HNS enabled treats prefixes as real directories with metadata of their own. The right SDK is `azure-storage-file-datalake`, which has `delete_directory(recursive=True)` semantics that mirror a real filesystem.
+
+Real-world implication: any tooling you pick for working with ADLS Gen2 needs to know about HNS. Some packages (older `deltalake` builds for example) assume flat blob layout and will surprise you.
+
+**Operational outcome.**
+
+- Storage keys rotated. New key is on the owner's desktop in `.tickstream-rotated-key.txt`.
+- Bronze container is empty and ready for the corrected ingester.
+- Parser is fixed.
+- The hourly schedule was paused (workflow_dispatch only triggers it) so no automatic re-run lands until the owner updates Infisical with the new key and we manually re-trigger.
+
+### Phase 3 — coming next
+
+Silver transformation. PySpark on Databricks Free Edition reads Bronze Delta, deduplicates, type casts, enforces schema, applies the Soda Core DQ suite, and writes Silver Delta. The aim is to demonstrate the dedup-versus-amendment problem that real lakehouses handle every day, on a dataset where amendments do not exist (crypto ticks are immutable), so the same code applies cleanly to SEC EDGAR or any other source where they do.
