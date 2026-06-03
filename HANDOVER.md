@@ -56,6 +56,28 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-03 — Phase 2 done
+
+Second Bronze run (after parser fix + key rotation + Infisical update) ingested all three symbols cleanly in 46 seconds of Python time (1m21s total wall clock including CLI install and dependency setup).
+
+Concrete state:
+
+- `az://bronze/raw/symbol=BTCUSDT/batch_date=2026-06-02/...zip` plus same for ETH and SOL.
+- `az://bronze/delta/bronze_agg_trades/` Delta table partitioned by `(symbol, batch_date)`, with 8 canonical aggTrades columns plus six audit columns.
+- Row counts on this batch: BTCUSDT 1,677,042, ETHUSDT 1,380,545, SOLUSDT 219,980. Total ~3.28M rows for one trading day.
+- `state/last_seen_hashes.json` has all three symbols' SHA-256 fingerprints. Next hourly run will skip all three with a "Hash unchanged" log entry until tomorrow's file is published.
+- `logs/runs/` has two files: the failed first run (`20260603_064326_367740a3.log`, status SUCCESS at workflow level but PARTIAL at app level since 2 of 3 symbols errored) and the corrected run (`20260603_074336_e000322e.log`, full SUCCESS).
+- Hourly cron is live. Manual `workflow_dispatch` always available.
+
+What this proves end to end:
+
+1. GitHub Actions cron triggers Python ingestion.
+2. Bootstrap secrets (3 in GitHub) authenticate to Infisical.
+3. Infisical hands back the operational secrets (Azure key, ntfy URL) for the duration of the job only.
+4. Python downloads from a public source, hashes, dedups against committed state, uploads raw to ADLS, parses CSV, writes Delta with audit columns.
+5. Plain-English run log auto-commits back to the repo so the audit trail lives next to the code.
+6. ntfy alerts fire on missing source files or transient errors (not exercised this run because everything worked, but the code paths are in place).
+
 ### 2026-06-03 — Phase 2 first run + security incident + parser fix
 
 **What we tried.** First Bronze ingestion run with the three configured symbols. The workflow itself returned green at the GitHub Actions level because BTCUSDT succeeded. ETHUSDT and SOLUSDT failed with `deltalake.SchemaMismatchError: Field <numeric_id> not found in schema`.

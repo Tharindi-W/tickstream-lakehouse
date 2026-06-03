@@ -222,6 +222,32 @@ Real-world implication: any tooling you pick for working with ADLS Gen2 needs to
 - Parser is fixed.
 - The hourly schedule was paused (workflow_dispatch only triggers it) so no automatic re-run lands until the owner updates Infisical with the new key and we manually re-trigger.
 
+### Phase 2 done — what landed (2026-06-03)
+
+Second run ingested all three symbols in 46 seconds of Python time. ~3.28M rows of real Binance trade data are now in Bronze Delta, partitioned by `(symbol, batch_date)`, with audit columns attached. The two log files in `logs/runs/` together tell the story of a failed run followed by a corrected run — exactly the kind of audit trail an enterprise auditor wants to see.
+
+**What you have proven you can build, end to end.**
+
+You now have a small but real lakehouse foundation: a vault, a cron-scheduled ingestion job, idempotent state, audit-columned Delta tables, plain-English logging, missing-source alerting, retry-with-backoff fault tolerance, and a real public data source feeding it. Every component is open source or free tier. Nothing relies on a paid Databricks or paid orchestrator.
+
+**Numbers from this batch (2026-06-02 daily aggTrades):**
+
+| Symbol | Compressed download | Parsed rows |
+|---|---|---|
+| BTCUSDT | 23.3 MiB | 1,677,042 |
+| ETHUSDT | 20.0 MiB | 1,380,545 |
+| SOLUSDT | 3.7 MiB | 219,980 |
+
+This is enough to start meaningfully exercising PySpark when we get to Silver. Three-and-a-quarter million rows is small for Spark in absolute terms but already large enough that a Pandas-only Silver would struggle as we add more days and more symbols.
+
 ### Phase 3 — coming next
 
-Silver transformation. PySpark on Databricks Free Edition reads Bronze Delta, deduplicates, type casts, enforces schema, applies the Soda Core DQ suite, and writes Silver Delta. The aim is to demonstrate the dedup-versus-amendment problem that real lakehouses handle every day, on a dataset where amendments do not exist (crypto ticks are immutable), so the same code applies cleanly to SEC EDGAR or any other source where they do.
+Silver transformation. PySpark on Databricks Free Edition reads the Bronze Delta we just produced, deduplicates within `(symbol, batch_date)`, type-casts strings into proper Decimal/Timestamp/Bool, enforces an asserted schema, applies a Soda Core DQ suite, quarantines anything that fails a check, and writes Silver Delta. We will also wire up `badRecordsPath` so that single malformed rows do not kill the job.
+
+Concrete deliverables for Phase 3:
+
+- A Databricks Free Edition workspace and a notebook (or job) that reads Bronze.
+- A PySpark transform module under `pipeline/silver/transform_silver.py` and a Databricks job spec under `pipeline/silver/job.yaml`.
+- Soda Core checks file under `dq/soda_silver.yml`.
+- An updated GitHub Actions workflow that triggers the Databricks Silver job after Bronze succeeds, using the `DATABRICKS_HOST` and `DATABRICKS_TOKEN` secrets already reserved in Infisical.
+- An additional Phase 3 smoke test workflow proving the Bronze → Silver chain works end to end.
