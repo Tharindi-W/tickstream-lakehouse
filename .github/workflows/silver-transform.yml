@@ -169,11 +169,27 @@ jobs:
           echo "Final result_state: $RESULT_STATE"
           echo "State message:      $STATE_MSG"
 
-          # Fetch notebook output for the summary
-          curl -sS -H "Authorization: Bearer $DATABRICKS_TOKEN" \
-            "$DATABRICKS_HOST/api/2.1/jobs/runs/get-output?run_id=$RUN_ID" > "$RUNNER_TEMP/output.json"
-          NOTEBOOK_OUT=$(jq -r '.notebook_output.result // "no output"' "$RUNNER_TEMP/output.json")
-          echo "Notebook summary: $NOTEBOOK_OUT"
+          # The Jobs API runs/get-output endpoint takes a task run_id, NOT the
+          # parent run_id. For one-shot submitted runs the parent has a tasks
+          # array with each task's own run_id.
+          TASK_RUN_ID=$(jq -r '.tasks[0].run_id // empty' "$RUNNER_TEMP/state.json")
+          NOTEBOOK_OUT="no output"
+          if [ -n "$TASK_RUN_ID" ]; then
+            curl -sS -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+              "$DATABRICKS_HOST/api/2.1/jobs/runs/get-output?run_id=$TASK_RUN_ID" > "$RUNNER_TEMP/output.json"
+            NOTEBOOK_OUT=$(jq -r '.notebook_output.result // "no output"' "$RUNNER_TEMP/output.json")
+            echo "Task run id: $TASK_RUN_ID"
+            echo "Notebook summary: $NOTEBOOK_OUT"
+            if [ "$RESULT_STATE" != "SUCCESS" ]; then
+              echo "::group::Task error detail"
+              jq '{
+                error: .error,
+                error_trace: .error_trace,
+                metadata_state: .metadata.state
+              }' "$RUNNER_TEMP/output.json" 2>/dev/null || cat "$RUNNER_TEMP/output.json"
+              echo "::endgroup::"
+            fi
+          fi
 
           # --- Step 6: alert and exit ---
           if [ "$RESULT_STATE" = "SUCCESS" ]; then
