@@ -1,0 +1,191 @@
+name: silver-transform
+
+# Manual for the first iteration. Will be wired to workflow_run after we
+# observe a few clean Silver runs end to end.
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_date:
+        description: 'Batch date to process (yyyy-mm-dd), leave blank to process all dates currently in Bronze'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: silver-transform
+  cancel-in-progress: false
+
+jobs:
+  silver:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Infisical CLI and jq
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical jq
+
+      - name: Deploy notebook and run Silver via Databricks Jobs API
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+          BATCH_DATE: ${{ inputs.batch_date }}
+        run: |
+          set -euo pipefail
+
+          # --- Step 1: fetch secrets ---
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > "$RUNNER_TEMP/secrets.env"
+          set -a
+          # shellcheck disable=SC1091
+          . "$RUNNER_TEMP/secrets.env"
+          set +a
+          rm -f "$RUNNER_TEMP/secrets.env"
+
+          : "${AZURE_STORAGE_ACCOUNT_NAME:?missing}"
+          : "${AZURE_STORAGE_ACCESS_KEY:?missing}"
+          : "${ALERT_WEBHOOK_URL:?missing}"
+          : "${DATABRICKS_HOST:?missing}"
+          : "${DATABRICKS_TOKEN:?missing}"
+
+          echo "::add-mask::$AZURE_STORAGE_ACCOUNT_NAME"
+          echo "::add-mask::$AZURE_STORAGE_ACCESS_KEY"
+          echo "::add-mask::$ALERT_WEBHOOK_URL"
+          echo "::add-mask::$DATABRICKS_HOST"
+          echo "::add-mask::$DATABRICKS_TOKEN"
+
+          DATABRICKS_HOST="${DATABRICKS_HOST%/}"
+          SILVER_RUN_ID="silver_$(date -u +%Y%m%d_%H%M%S)_$$"
+          echo "Silver run id: $SILVER_RUN_ID"
+          echo "Batch date filter: ${BATCH_DATE:-ALL}"
+
+          # --- Step 2: resolve user email and notebook path ---
+          USER_EMAIL=$(curl -sS -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            "$DATABRICKS_HOST/api/2.0/preview/scim/v2/Me" | jq -r '.userName')
+          if [ -z "$USER_EMAIL" ] || [ "$USER_EMAIL" = "null" ]; then
+            echo "Could not resolve user email from Databricks SCIM API."
+            exit 1
+          fi
+          echo "::add-mask::$USER_EMAIL"
+          NOTEBOOK_PATH="/Users/$USER_EMAIL/tickstream_silver"
+          echo "Target notebook path: /Users/***/tickstream_silver"
+
+          # --- Step 3: upload notebook source ---
+          NOTEBOOK_B64=$(base64 -w0 pipeline/silver/transform_silver.py)
+          IMPORT_PAYLOAD=$(jq -n \
+            --arg path "$NOTEBOOK_PATH" \
+            --arg content "$NOTEBOOK_B64" \
+            '{path: $path, format: "SOURCE", language: "PYTHON", content: $content, overwrite: true}')
+
+          curl -sS -X POST -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$IMPORT_PAYLOAD" \
+            "$DATABRICKS_HOST/api/2.0/workspace/import" > "$RUNNER_TEMP/import.json"
+
+          if [ "$(jq -r 'has("error_code")' "$RUNNER_TEMP/import.json")" = "true" ]; then
+            echo "Notebook import failed:"
+            jq . "$RUNNER_TEMP/import.json"
+            exit 1
+          fi
+          echo "Notebook uploaded."
+
+          # --- Step 4: submit one-shot job run on Serverless ---
+          SUBMIT_PAYLOAD=$(jq -n \
+            --arg run_name "tickstream-$SILVER_RUN_ID" \
+            --arg notebook_path "$NOTEBOOK_PATH" \
+            --arg storage_account "$AZURE_STORAGE_ACCOUNT_NAME" \
+            --arg storage_key "$AZURE_STORAGE_ACCESS_KEY" \
+            --arg batch_date "$BATCH_DATE" \
+            --arg silver_run_id "$SILVER_RUN_ID" \
+            '{
+              run_name: $run_name,
+              tasks: [{
+                task_key: "silver_transform",
+                notebook_task: {
+                  notebook_path: $notebook_path,
+                  base_parameters: {
+                    storage_account: $storage_account,
+                    storage_key: $storage_key,
+                    batch_date: $batch_date,
+                    silver_run_id: $silver_run_id
+                  }
+                },
+                environment_key: "default"
+              }],
+              environments: [{
+                environment_key: "default",
+                spec: { client: "1" }
+              }]
+            }')
+
+          curl -sS -X POST -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$SUBMIT_PAYLOAD" \
+            "$DATABRICKS_HOST/api/2.1/jobs/runs/submit" > "$RUNNER_TEMP/submit.json"
+
+          RUN_ID=$(jq -r '.run_id // empty' "$RUNNER_TEMP/submit.json")
+          if [ -z "$RUN_ID" ]; then
+            echo "Job submit failed. Response:"
+            jq . "$RUNNER_TEMP/submit.json"
+            exit 1
+          fi
+          echo "Databricks run id: $RUN_ID"
+
+          # --- Step 5: poll until terminal state ---
+          MAX_WAIT=900
+          ELAPSED=0
+          SLEEP=20
+          while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+            curl -sS -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+              "$DATABRICKS_HOST/api/2.1/jobs/runs/get?run_id=$RUN_ID" > "$RUNNER_TEMP/state.json"
+            LIFE=$(jq -r '.state.life_cycle_state' "$RUNNER_TEMP/state.json")
+            echo "  [${ELAPSED}s] life_cycle_state=$LIFE"
+            case "$LIFE" in
+              TERMINATED|INTERNAL_ERROR|SKIPPED) break ;;
+            esac
+            sleep "$SLEEP"
+            ELAPSED=$((ELAPSED + SLEEP))
+          done
+
+          RESULT_STATE=$(jq -r '.state.result_state // "UNKNOWN"' "$RUNNER_TEMP/state.json")
+          STATE_MSG=$(jq -r '.state.state_message // ""' "$RUNNER_TEMP/state.json")
+          echo "Final result_state: $RESULT_STATE"
+          echo "State message:      $STATE_MSG"
+
+          # Fetch notebook output for the summary
+          curl -sS -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            "$DATABRICKS_HOST/api/2.1/jobs/runs/get-output?run_id=$RUN_ID" > "$RUNNER_TEMP/output.json"
+          NOTEBOOK_OUT=$(jq -r '.notebook_output.result // "no output"' "$RUNNER_TEMP/output.json")
+          echo "Notebook summary: $NOTEBOOK_OUT"
+
+          # --- Step 6: alert and exit ---
+          if [ "$RESULT_STATE" = "SUCCESS" ]; then
+            curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+              -H "Title: TickStream Silver SUCCESS" \
+              -H "Tags: white_check_mark" \
+              -d "Silver run $SILVER_RUN_ID succeeded. $NOTEBOOK_OUT" > /dev/null
+            echo "Silver run succeeded."
+          else
+            curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+              -H "Title: TickStream Silver FAILED" \
+              -H "Tags: rotating_light" \
+              -d "Silver run $SILVER_RUN_ID failed. State: $RESULT_STATE. Message: $STATE_MSG" > /dev/null
+            exit 1
+          fi
