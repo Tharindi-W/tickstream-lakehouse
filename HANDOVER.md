@@ -56,6 +56,23 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-03 — Path C dead end documented, Path B chosen
+
+We attempted Phase 3 Path C (Unity Catalog External Location backed by an Azure Managed Identity) and discovered it is architecturally impossible on Databricks Free Edition.
+
+**The fact.** Free Edition workspaces are hosted by Databricks themselves under their own Azure account (account id `c3c1bd8f-49c3-408d-8f3e-a226329652d4`, observed in the API error). Our Azure Access Connector and its managed identity live in our own Azure subscription. Azure managed identities cannot cross Azure AD tenants. Therefore Databricks compute cannot resolve a managed identity that we own.
+
+**Symptom.** `BAD_REQUEST: Azure Managed Identity Credential with Access Connector Id ... could not be found.` on `POST /api/2.1/unity-catalog/storage-credentials`.
+
+**What we built before discovering it (kept for posterity, no cost):**
+- Azure Access Connector `tickstream-access-connector` in `tickstream-rg`, system-assigned managed identity, principal id `1cbc4ba9-d6dc-43e2-b3a2-df99b667436d`.
+- Storage Blob Data Contributor role assigned to that principal on `tickstreamlakecbe5`.
+- These resources are free and will become useful the day this project ever migrates to paid Azure Databricks (where the workspace lives in the same tenant as the connector).
+
+**Workflow kept as evidence.** `.github/workflows/setup-uc-external-locations.yml` is left in place. It is the actual API call shape needed for Path C. Anyone reproducing this on paid Azure Databricks should be able to run it and have it succeed.
+
+**Decision: Path B (UC Volume copy).** Bronze stays in ADLS exactly as it is, AND uploads a parquet copy of each batch to a UC managed Volume (`workspace.default.tickstream_bronze`) via Databricks Files API. Volumes live in Databricks-managed storage, no cross-tenant identity needed. Silver runs on Free Edition Serverless, reads from the Volume, writes to a UC managed Delta table `workspace.default.silver_agg_trades`. ADLS remains the source of record. The Volume is the Spark-readable copy.
+
 ### 2026-06-03 — Phase 3 planned
 
 Silver transform on Databricks Free Edition. Decisions locked here:

@@ -1,0 +1,115 @@
+name: setup-uc-volume
+
+# One-off setup for Path B. Creates a UC managed Volume in the workspace
+# catalog that Bronze writes parquet copies to and Silver reads from.
+# Volumes live in Databricks-managed storage, so they work on Free Edition
+# (no cross-tenant identity needed).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    env:
+      CATALOG: workspace
+      SCHEMA: default
+      VOLUME: tickstream_bronze
+    steps:
+      - name: Install Infisical CLI and jq
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical jq
+
+      - name: Create UC Volume idempotently
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > "$RUNNER_TEMP/secrets.env"
+          set -a
+          # shellcheck disable=SC1091
+          . "$RUNNER_TEMP/secrets.env"
+          set +a
+          rm -f "$RUNNER_TEMP/secrets.env"
+
+          : "${DATABRICKS_HOST:?}"
+          : "${DATABRICKS_TOKEN:?}"
+
+          echo "::add-mask::$DATABRICKS_HOST"
+          echo "::add-mask::$DATABRICKS_TOKEN"
+
+          DATABRICKS_HOST="${DATABRICKS_HOST%/}"
+          AUTH="Authorization: Bearer $DATABRICKS_TOKEN"
+          FULL_NAME="${CATALOG}.${SCHEMA}.${VOLUME}"
+
+          # Sanity-check that the catalog and schema exist on this workspace.
+          echo "Confirming catalog/schema exist..."
+          CCODE=$(curl -sS -o "$RUNNER_TEMP/c.json" -w "%{http_code}" -H "$AUTH" \
+            "$DATABRICKS_HOST/api/2.1/unity-catalog/catalogs/${CATALOG}")
+          SCODE=$(curl -sS -o "$RUNNER_TEMP/s.json" -w "%{http_code}" -H "$AUTH" \
+            "$DATABRICKS_HOST/api/2.1/unity-catalog/schemas/${CATALOG}.${SCHEMA}")
+          echo "  catalog '${CATALOG}': HTTP ${CCODE}"
+          echo "  schema  '${CATALOG}.${SCHEMA}': HTTP ${SCODE}"
+          if [ "$CCODE" != "200" ] || [ "$SCODE" != "200" ]; then
+            echo "Cannot proceed: catalog or schema not reachable."
+            jq -c '{error_code, message}' "$RUNNER_TEMP/c.json" 2>/dev/null || cat "$RUNNER_TEMP/c.json"
+            jq -c '{error_code, message}' "$RUNNER_TEMP/s.json" 2>/dev/null || cat "$RUNNER_TEMP/s.json"
+            exit 1
+          fi
+
+          # Check if the volume already exists.
+          VCODE=$(curl -sS -o "$RUNNER_TEMP/v.json" -w "%{http_code}" -H "$AUTH" \
+            "$DATABRICKS_HOST/api/2.1/unity-catalog/volumes/${FULL_NAME}")
+          if [ "$VCODE" = "200" ]; then
+            echo ""
+            echo "Volume '${FULL_NAME}' already exists. Skipping create."
+            jq -c '{full_name, volume_type, storage_location: (.storage_location // null)}' "$RUNNER_TEMP/v.json"
+            exit 0
+          fi
+
+          echo ""
+          echo "Creating MANAGED volume '${FULL_NAME}'..."
+          PAYLOAD=$(jq -n \
+            --arg c "$CATALOG" \
+            --arg s "$SCHEMA" \
+            --arg v "$VOLUME" \
+            '{
+              catalog_name: $c,
+              schema_name:  $s,
+              name:         $v,
+              volume_type:  "MANAGED",
+              comment:      "TickStream Lakehouse: parquet copy of Bronze for Spark consumption on Free Edition"
+            }')
+
+          CCODE=$(curl -sS -o "$RUNNER_TEMP/v.json" -w "%{http_code}" \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$DATABRICKS_HOST/api/2.1/unity-catalog/volumes")
+
+          if [ "$CCODE" != "200" ]; then
+            echo "Failed to create volume. HTTP $CCODE"
+            jq -c '{error_code, message}' "$RUNNER_TEMP/v.json" 2>/dev/null || cat "$RUNNER_TEMP/v.json"
+            exit 1
+          fi
+
+          echo "Volume created."
+          jq -c '{full_name, volume_type}' "$RUNNER_TEMP/v.json"
