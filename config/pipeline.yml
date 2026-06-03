@@ -1,0 +1,48 @@
+# Non-secret pipeline configuration.
+# Secrets live in Infisical and are fetched at runtime by the GitHub Actions workflow.
+# Values here are tracked in git and may be edited freely.
+
+source:
+  base_url: https://data.binance.vision
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+  data_type: aggTrades           # aggregated trade ticks
+  granularity: daily             # daily files per symbol
+  earliest_valid_date: '2017-08-17'  # Binance launch, used by temporal DQ check
+
+storage:
+  cloud: azure
+  service: adls_gen2
+  container_bronze: bronze
+  container_silver: silver
+  container_gold: gold
+  container_bad: bad-records
+  container_archive: archive
+
+retention:
+  pipeline_log_days: 50          # logs/runs/*.log older than this are deleted
+  delta_time_travel_days: 30     # VACUUM RETAIN = days * 24 hours
+  hot_years: 2                   # tier transitions for ADLS lifecycle policy
+  warm_years: 5
+
+dq:
+  rejection_rate_threshold_pct: 5.0
+  silver_to_bronze_row_floor_pct: 80.0
+
+schedule:
+  week1_cron: '0 * * * *'        # hourly during the dev week
+  steady_cron: '0 6 * * *'       # 06:00 UTC daily after Week 1
+  reset_after_days: 7
+
+alerts:
+  discord_webhook_secret: DISCORD_WEBHOOK_URL  # name of the secret in Infisical
+  channel: pipeline-alerts
+
+governance:
+  data_source: binance_vision
+  regulatory_basis: public_market_data
+  domain: crypto_markets
+  contains_pii: false
+  owner: Tharindi-W

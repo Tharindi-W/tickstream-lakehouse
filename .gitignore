@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Secrets — never commit
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+secrets.yml
+secrets.yaml
+secrets/
+.infisical/
+.infisical.json
+infisical-token.txt
+
+# Data — never commit raw or processed data
+data/
+*.parquet
+delta-table/
+_delta_log/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+ehthumbs.db
+
+# Stray local logs (we DO track pipeline run logs under logs/runs/)
+*.log
+!logs/runs/*.log
+
+# dbt
+target/
+dbt_packages/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Databricks Connect
+.databricks/
+
+# Node (for Evidence.dev later)
+node_modules/
+.evidence/
