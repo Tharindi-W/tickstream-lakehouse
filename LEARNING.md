@@ -307,3 +307,48 @@ That is it for your side. Tell me when done and I will run the Phase 3 vault cha
 - Apply Delta TBLPROPERTIES for governance (owner, domain, contains_pii=false, regulatory_basis=public_market_data).
 
 **Honest scoping note.** The first Silver iteration passes the storage account key as a Databricks Job parameter, which means the value is visible in Job run history. That is acceptable for a portfolio project and is documented as a known trade-off. A follow-up commit will replace this with either a Databricks Secret Scope synced from Infisical or an Azure AD service principal mounted on the workspace.
+
+### Phase 3 done — what landed (2026-06-03)
+
+Silver Delta table created at `workspace.default.silver_agg_trades` via real Databricks Free Edition Serverless Spark. 3.28M rows from the 2026-06-02 batch, type-cast into proper Decimal/Timestamp/Bool, deduplicated, written via `MERGE`. Governance TBLPROPERTIES applied. 40 seconds of Spark wall clock.
+
+#### The two architectural lessons of Phase 3
+
+1. **Databricks Free Edition Serverless deliberately blocks `fs.azure.*` Spark configs.** Spark Connect (the protocol Free Edition uses) has a denylist of server-side configs that user code cannot set. The intent is to force all storage access through Unity Catalog so the catalog stays the audit point. We learned this by hitting `[CONFIG_NOT_AVAILABLE]` when the first Silver iteration tried `spark.conf.set("fs.azure.account.auth.type.<account>", "SharedKey")`.
+
+2. **Free Edition workspaces live in Databricks' own Azure tenant, not yours.** This kills the "UC External Location backed by your Azure Managed Identity" pattern because the managed identity cannot cross Azure AD tenants. The error we hit was `Azure Managed Identity Credential ... could not be found` with Databricks' own account id showing up in the error. The Access Connector and role we created in Azure are valid resources, they will work the day you stand up paid Azure Databricks inside your own subscription. For Free Edition we pivoted to UC Volumes.
+
+#### Path B in plain English
+
+- ADLS stays as the source of record. Raw zips, Bronze Delta, all there.
+- Bronze ingester writes a parquet copy of each batch to a UC Volume at `/Volumes/workspace/default/tickstream_bronze/symbol=X/batch_date=Y/agg_trades.parquet`. The Volume lives in Databricks-managed storage, so Spark on Free Edition is allowed to read it.
+- Silver notebook reads from the Volume, transforms, writes to a UC managed Delta table at `workspace.default.silver_agg_trades`. No storage account key passes through Spark at any point.
+- Cost of this pattern: data is stored twice. At our 50 MiB per day it is irrelevant. At hundreds of GB per day you would want to revisit the architecture.
+
+#### Why this is still a real Databricks story for a portfolio
+
+- The notebook is real PySpark.
+- The job is a real Databricks Job on real Serverless compute.
+- The MERGE is a real Delta MERGE that demonstrates idempotency.
+- The target is a real Unity Catalog managed table that you can query from Databricks SQL.
+- The orchestration is real cross-system: GitHub Actions runs the bash, calls the Databricks Jobs API, polls, alerts.
+
+What is NOT real: Spark is not reading from your enterprise data lake directly. It is reading a copy in Databricks-managed storage. For paid Databricks this layer would not be necessary.
+
+#### Phase 3 incident log
+
+Before this passed clean, we hit and resolved five distinct issues. They are recorded here because each one is exactly the kind of surprise a real DE faces.
+
+| # | Symptom | Real cause | Fix |
+|---|---|---|---|
+| 1 | `Workspace doesn't support Client-1 channel for REPL` | Free Edition Serverless requires `client: "2"` in the Jobs API environment spec | Bumped the client version in `silver-transform.yml` |
+| 2 | `Workload failed, see run output for details` with empty `notebook_output.result` | `runs/get-output` requires the TASK run_id, not the parent run_id | Walked `tasks[0].run_id` from the parent run and called get-output with that |
+| 3 | `[CONFIG_NOT_AVAILABLE] fs.azure.account.auth.type.*** is not available` | Spark Connect denylist of configs on Free Edition | Pivoted from raw shared-key ADLS access to UC, ultimately to Path B |
+| 4 | `Azure Managed Identity Credential ... could not be found` on creating Storage Credential | Free Edition runs in Databricks' Azure tenant, not yours; managed identities cannot cross tenants | Documented as the Path C dead end; pivoted to Path B (UC Volume copy) |
+| 5 | `[UNSUPPORTED_FEATURE.SET_TABLE_PROPERTY] owner is a reserved table property` | UC auto-manages `owner` on every table; you cannot set it via `TBLPROPERTIES` | Removed `owner` from the Silver notebook's SET TBLPROPERTIES, kept the other custom keys |
+
+The detail above is in the repo's commit history with full timestamps and error traces. Anyone inheriting this project can search the relevant commit messages and reproduce the reasoning.
+
+### Phase 4 — coming next
+
+Gold modelling with dbt-spark. Reads the Silver Delta table, builds OHLCV resamples (1-minute, 1-hour, 1-day), VWAP per symbol-day, and a daily volatility metric. Tests live next to the models in dbt format. Output: three or four Gold tables under `workspace.default.gold_*`.

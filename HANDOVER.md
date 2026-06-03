@@ -56,6 +56,21 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-03 — Phase 3 done (Path B)
+
+End-to-end Silver pipeline works. Concrete state after this phase:
+
+- **UC Volume**: `workspace.default.tickstream_bronze`, MANAGED, populated with three parquet files per batch (one per symbol) at `symbol=X/batch_date=YYYY-MM-DD/agg_trades.parquet`. Spark partition discovery picks up the partition columns from the directory layout.
+- **UC managed Delta table**: `workspace.default.silver_agg_trades`, partitioned by `(symbol, batch_date)`, written via Delta `MERGE` on natural key for idempotency.
+- **First successful Silver run**: 3,277,567 Bronze rows in scope, 3,277,567 Silver rows written, 0 duplicates dropped (clean first-time MERGE). 40 seconds of Databricks Free Edition Serverless Spark time.
+- **Governance TBLPROPERTIES**: `domain`, `data_source`, `contains_pii`, `regulatory_basis`, `refresh_cadence`, `last_silver_run` all set on the Silver table. `owner` is auto-managed by UC.
+- **No storage credentials in Databricks**: Silver does not touch ADLS at all. Reads from UC Volume, writes to UC managed Delta. The shared key for ADLS lives only in Infisical and is used only by the GitHub Actions runner during Bronze ingestion.
+
+Vault chain end-to-end:
+GitHub Actions cron → GitHub Secrets (3 bootstrap secrets) → Infisical (5 operational secrets) → ADLS (via shared key in Python) AND Databricks Files API (via PAT) → UC Volume → Databricks Serverless Spark → UC managed Silver Delta table.
+
+The complete dependency tree is described in `LEARNING.md` Phase 3 section.
+
 ### 2026-06-03 — Path C dead end documented, Path B chosen
 
 We attempted Phase 3 Path C (Unity Catalog External Location backed by an Azure Managed Identity) and discovered it is architecturally impossible on Databricks Free Edition.
