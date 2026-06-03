@@ -1,0 +1,92 @@
+name: ingest-bronze-hourly
+
+on:
+  schedule:
+    - cron: '0 * * * *'      # every hour, on the hour (Week 1 cadence)
+  workflow_dispatch:           # manual trigger always available
+
+permissions:
+  contents: write              # for committing logs/runs/ and state/ back to repo
+
+concurrency:
+  group: ingest-bronze
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Infisical CLI
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical
+          infisical --version
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch secrets and run Bronze ingestion
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > "$RUNNER_TEMP/secrets.env"
+          set -a
+          # shellcheck disable=SC1091
+          . "$RUNNER_TEMP/secrets.env"
+          set +a
+          rm -f "$RUNNER_TEMP/secrets.env"
+
+          : "${AZURE_STORAGE_ACCOUNT_NAME:?missing in vault}"
+          : "${AZURE_STORAGE_ACCESS_KEY:?missing in vault}"
+          : "${ALERT_WEBHOOK_URL:?missing in vault}"
+
+          echo "::add-mask::$AZURE_STORAGE_ACCOUNT_NAME"
+          echo "::add-mask::$AZURE_STORAGE_ACCESS_KEY"
+          echo "::add-mask::$ALERT_WEBHOOK_URL"
+
+          python -m pipeline.bronze.land_to_bronze
+
+      - name: Commit run log and state back to repo
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.name  "tickstream-bot"
+          git config user.email "bot@tickstream.local"
+          git add logs/runs/ state/ || true
+          if git diff --cached --quiet; then
+            echo "No log or state changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(bronze): hourly run $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+          # Pull-rebase in case another run already committed (concurrency group
+          # serialises this workflow, but be defensive).
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main
