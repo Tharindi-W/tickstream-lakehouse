@@ -56,6 +56,28 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-03 — Phase 4 done (Gold dbt)
+
+Three Gold models materialised in Databricks UC, all dbt tests pass.
+
+- `workspace.default.gold_ohlcv_daily` (Delta table, partitioned by `symbol`): daily OHLCV per `(symbol, batch_date)` with VWAP, total volume, total notional, trade count, session open/close timestamps. Uses `min_by(price, transact_time)` and `max_by(price, transact_time)` to capture true open and close prices.
+- `workspace.default.gold_ohlcv_hourly` (Delta table, partitioned by `(symbol, batch_date)`): hourly OHLCV bucketed by `date_trunc('HOUR', transact_time)`.
+- `workspace.default.gold_symbol_summary` (Delta view over the daily table): per-symbol rollup of days observed, total volume, total notional, overall VWAP, average daily VWAP, first and last seen trade timestamps.
+
+dbt build summary: 2 table models, 25 data tests, 1 view model, 39.02 seconds wall clock. PASS=28 ERROR=0.
+
+Tests in place:
+- Source tests on `silver_agg_trades`: `not_null` on `symbol`, `agg_trade_id`, `batch_date`, `is_valid`. `accepted_values` on `symbol`.
+- Schema tests on each Gold model: `not_null` on every analytical column (open/high/low/close/volume/notional/trade_count). `accepted_values` on `symbol`. `unique` on `symbol` in the summary view.
+- Singular test: each `(symbol, batch_date)` must appear at most once in `gold_ohlcv_daily`.
+
+Orchestration:
+- `.github/workflows/gold-dbt.yml` discovers a SQL warehouse via `/api/2.0/sql/warehouses`, starts it if STOPPED, polls until RUNNING, then runs `dbt debug` followed by `dbt build`. Reports per-model `rows_affected` via ntfy on success.
+- dbt profile reads `DATABRICKS_HOST_BARE`, `DATABRICKS_HTTP_PATH`, `DATABRICKS_TOKEN` from env. All three are populated at runtime by the same Infisical bootstrap chain that Bronze and Silver use.
+
+Known deprecation warnings:
+- `MissingArgumentsPropertyInGenericTestDeprecation: 3 occurrences` in dbt 1.10+ for the way we declare `accepted_values` tests. Cosmetic only, runs pass clean. Tracked for a follow-up commit to migrate the test syntax.
+
 ### 2026-06-03 — Phase 3 done (Path B)
 
 End-to-end Silver pipeline works. Concrete state after this phase:

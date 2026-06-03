@@ -349,6 +349,41 @@ Before this passed clean, we hit and resolved five distinct issues. They are rec
 
 The detail above is in the repo's commit history with full timestamps and error traces. Anyone inheriting this project can search the relevant commit messages and reproduce the reasoning.
 
-### Phase 4 — coming next
+### Phase 4 done — Gold dbt models (2026-06-03)
 
-Gold modelling with dbt-spark. Reads the Silver Delta table, builds OHLCV resamples (1-minute, 1-hour, 1-day), VWAP per symbol-day, and a daily volatility metric. Tests live next to the models in dbt format. Output: three or four Gold tables under `workspace.default.gold_*`.
+dbt-spark project under `dbt/` materialises three Gold models against the Databricks SQL warehouse and runs 25 data tests, all green. 39 seconds wall clock from `dbt build` start to finish.
+
+#### What you built
+
+- **`gold_ohlcv_daily`** (Delta table). Daily OHLCV per `(symbol, batch_date)` with VWAP, total volume, total notional, trade count, and the actual first/last trade timestamps within the day. The open and close prices are computed with Spark's `min_by(price, transact_time)` and `max_by(price, transact_time)` so they reflect the true session open and close, not the lowest/highest prices of the day.
+- **`gold_ohlcv_hourly`** (Delta table). Same shape, hourly buckets via `date_trunc('HOUR', transact_time)`. Useful for intraday charts and short-window volatility.
+- **`gold_symbol_summary`** (Delta view). Per-symbol rollup: days observed, total volume, total notional, overall VWAP, average daily VWAP, first and last seen trade. Free, always fresh against the daily table.
+
+#### What dbt taught you in this phase
+
+1. **`dbt source` and `dbt ref` are how you build a lineage graph.** Source nodes reference the Silver table (defined in `sources.yml`). `ref('gold_ohlcv_daily')` from `gold_symbol_summary` builds an edge in the DAG. dbt uses this to decide build order and to draw the lineage graph in `dbt docs`.
+2. **Schema tests are declarative DQ.** You wrote no SQL for the 25 column tests. dbt generated them from the `tests:` blocks in `schema.yml` and `sources.yml`. `not_null`, `unique`, `accepted_values` are the four built-ins that cover 80% of real DQ work.
+3. **Singular tests are for the cases the built-ins do not cover.** The `(symbol, batch_date)` uniqueness check is one SQL file in `tests/`. dbt runs it as part of `dbt build` and fails the run if it returns any rows.
+4. **`dbt build` is `dbt run` plus `dbt test` plus dependency-aware sequencing.** It runs each model, then runs all tests for that model, before moving to the next. If a model's tests fail, dependent models are skipped. This is what makes dbt safer than a hand-rolled SQL pipeline.
+
+#### Auth model worth understanding
+
+dbt does NOT use the same compute as Silver. Silver uses Serverless notebook clusters via the Jobs API. dbt uses the **SQL warehouse** via the SQL/2.0 Statement Execution API (under the hood). They are two different compute primitives on the same Databricks workspace.
+
+The workflow:
+
+1. Calls `/api/2.0/sql/warehouses` to find available warehouses.
+2. Picks the first one (Free Edition gives you one default Serverless SQL warehouse).
+3. Starts it if not running, polls until running.
+4. Sets `DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/<id>` so dbt-databricks knows where to connect.
+5. Runs dbt.
+
+If you ever set up multiple SQL warehouses with different scaling profiles, this workflow would need to choose explicitly by name. For one warehouse, "pick the first" is correct.
+
+#### Honest caveat
+
+dbt-databricks 1.9+ emits a deprecation warning for the way we declare `accepted_values` tests. The runs pass clean today but the syntax will eventually need a tweak. Recorded in HANDOVER for follow-up.
+
+### Phase 5 — coming next
+
+Observability and ops. A Databricks SQL dashboard reading from the Gold tables (data dashboard), a Grafana Cloud dashboard reading from a pipeline_run_log Delta table that Silver and Bronze update (ops dashboard), 50-day log rotation on `logs/runs/`, and an OpenLineage emitter to a self-hosted Marquez instance for cross-job lineage.
