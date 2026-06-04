@@ -1,0 +1,30 @@
+# Pipeline run 20260604_012306_6ce281d7
+
+Started at (UTC): 2026-06-04T01:23:06.192475+00:00
+
+[01:23:06] Run id: 20260604_012306_6ce281d7
+[01:23:06] Symbols: BTCUSDT, ETHUSDT, SOLUSDT
+[01:23:06] Batch date (T-1 UTC): 2026-06-03
+[01:23:06] Bronze container: bronze
+
+## Symbol: BTCUSDT
+
+[01:23:06] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-06-03.zip
+[01:23:06] Source not yet available for BTCUSDT on 2026-06-03.
+
+## Symbol: ETHUSDT
+
+[01:23:07] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/ETHUSDT/ETHUSDT-aggTrades-2026-06-03.zip
+[01:23:07] Source not yet available for ETHUSDT on 2026-06-03.
+
+## Symbol: SOLUSDT
+
+[01:23:07] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/SOLUSDT/SOLUSDT-aggTrades-2026-06-03.zip
+[01:23:08] Source not yet available for SOLUSDT on 2026-06-03.
+
+## Result
+
+- Status: **WAITING_SOURCE**
+- Summary: processed=0, skipped_unchanged=0, missing_source=3, errors=0
+- Ended at (UTC): 2026-06-04T01:23:08.543311+00:00
+- Duration: 2.4 seconds
