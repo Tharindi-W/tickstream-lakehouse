@@ -1,0 +1,52 @@
+{
+  "rules": [
+    {
+      "enabled": true,
+      "name": "tickstream-hot-to-cool-after-2-years",
+      "type": "Lifecycle",
+      "definition": {
+        "actions": {
+          "baseBlob": {
+            "tierToCool": { "daysAfterModificationGreaterThan": 730 }
+          }
+        },
+        "filters": {
+          "blobTypes": ["blockBlob"],
+          "prefixMatch": ["bronze/raw/", "bronze/delta/"]
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "name": "tickstream-cool-to-archive-after-5-years",
+      "type": "Lifecycle",
+      "definition": {
+        "actions": {
+          "baseBlob": {
+            "tierToArchive": { "daysAfterModificationGreaterThan": 1825 }
+          }
+        },
+        "filters": {
+          "blobTypes": ["blockBlob"],
+          "prefixMatch": ["bronze/raw/", "bronze/delta/", "archive/"]
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "name": "tickstream-purge-bad-records-after-90-days",
+      "type": "Lifecycle",
+      "definition": {
+        "actions": {
+          "baseBlob": {
+            "delete": { "daysAfterModificationGreaterThan": 90 }
+          }
+        },
+        "filters": {
+          "blobTypes": ["blockBlob"],
+          "prefixMatch": ["bad-records/"]
+        }
+      }
+    }
+  ]
+}

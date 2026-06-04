@@ -1,0 +1,109 @@
+name: maintenance-weekly
+
+# Runs every Sunday at 04:00 UTC. Executes maintenance/optimize_vacuum.sql
+# against the workspace's SQL warehouse via the Statement Execution API.
+# OPTIMIZE compacts small files into larger ones (faster reads), ZORDER
+# co-locates rows by frequently-filtered columns (faster predicate
+# pushdown), and VACUUM removes data files orphaned by past writes.
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'    # Sundays at 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Infisical CLI and jq
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update -qq
+          sudo apt-get install -y infisical jq
+
+      - name: Run OPTIMIZE + VACUUM via SQL Statement Execution API
+        env:
+          INFISICAL_CLIENT_ID:     ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT_ID:    ${{ secrets.INFISICAL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          INFISICAL_TOKEN=$(infisical login \
+            --method=universal-auth \
+            --client-id="$INFISICAL_CLIENT_ID" \
+            --client-secret="$INFISICAL_CLIENT_SECRET" \
+            --plain --silent)
+          export INFISICAL_TOKEN
+
+          infisical export \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="$INFISICAL_PROJECT_ID" \
+            --env=dev \
+            --format=dotenv > "$RUNNER_TEMP/secrets.env"
+          set -a; . "$RUNNER_TEMP/secrets.env"; set +a
+          rm -f "$RUNNER_TEMP/secrets.env"
+
+          : "${DATABRICKS_HOST:?}"
+          : "${DATABRICKS_TOKEN:?}"
+          : "${ALERT_WEBHOOK_URL:?}"
+
+          echo "::add-mask::$DATABRICKS_HOST"
+          echo "::add-mask::$DATABRICKS_TOKEN"
+          echo "::add-mask::$ALERT_WEBHOOK_URL"
+
+          HOST_TRIM="${DATABRICKS_HOST%/}"
+          AUTH="Authorization: Bearer $DATABRICKS_TOKEN"
+
+          # Discover and start a SQL warehouse
+          curl -sS -H "$AUTH" "$HOST_TRIM/api/2.0/sql/warehouses" > "$RUNNER_TEMP/wh.json"
+          WAREHOUSE_ID=$(jq -r '.warehouses[0].id // empty' "$RUNNER_TEMP/wh.json")
+          if [ -z "$WAREHOUSE_ID" ]; then
+            echo "No SQL warehouse available."; exit 1
+          fi
+          STATE=$(jq -r '.warehouses[0].state' "$RUNNER_TEMP/wh.json")
+          if [ "$STATE" != "RUNNING" ]; then
+            curl -sS -X POST -H "$AUTH" "$HOST_TRIM/api/2.0/sql/warehouses/$WAREHOUSE_ID/start" > /dev/null || true
+            for attempt in 1 2 3 4 5 6 7 8; do
+              sleep 15
+              STATE=$(curl -sS -H "$AUTH" "$HOST_TRIM/api/2.0/sql/warehouses/$WAREHOUSE_ID" | jq -r '.state')
+              echo "[attempt $attempt] state=$STATE"
+              [ "$STATE" = "RUNNING" ] && break
+            done
+          fi
+
+          # Execute each statement in the SQL file sequentially (the API
+          # only takes one statement per call).
+          FAILED=0
+          while IFS= read -r stmt; do
+            # Trim and skip empty / comment-only
+            stmt="$(echo "$stmt" | sed 's/--.*$//' | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            [ -z "$stmt" ] && continue
+            echo "::group::Statement"
+            echo "  $stmt"
+            PAYLOAD=$(jq -n --arg s "$stmt" --arg w "$WAREHOUSE_ID" '{warehouse_id: $w, statement: $s, wait_timeout: "50s"}')
+            RESP=$(curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" -d "$PAYLOAD" "$HOST_TRIM/api/2.0/sql/statements")
+            STATUS=$(echo "$RESP" | jq -r '.status.state // "UNKNOWN"')
+            echo "  state: $STATUS"
+            if [ "$STATUS" != "SUCCEEDED" ]; then
+              FAILED=1
+              echo "$RESP" | jq -c '{state: .status.state, error: .status.error}'
+            fi
+            echo "::endgroup::"
+          done < <(awk 'BEGIN{RS=";"; ORS=""} {if (length($0)>0) print $0";\n"}' maintenance/optimize_vacuum.sql)
+
+          if [ "$FAILED" = "1" ]; then
+            curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+              -H "Title: TickStream weekly maintenance had failures" -H "Tags: warning" \
+              -d "Some OPTIMIZE/VACUUM statements failed. Check the workflow log." > /dev/null
+            exit 1
+          fi
+
+          curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+            -H "Title: TickStream weekly maintenance OK" -H "Tags: white_check_mark" \
+            -d "OPTIMIZE + VACUUM completed on Silver and Gold at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /dev/null
