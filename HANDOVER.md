@@ -56,6 +56,27 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-04 — every workflow now writes a per-run log (Phase 9 partial)
+
+A reviewer pointed out that only Bronze was leaving Markdown breadcrumbs in `logs/runs/`. Silver, Gold, weekly maintenance, and log rotation all had observability via GitHub Actions UI and ntfy, but nothing in the repo. Fixed.
+
+- `silver-transform.yml` writes `YYYYMMDD_HHMMSS_<8hex>_silver.log` capturing the Databricks run id, task run id, result_state, and the notebook exit string (which already contains row counts).
+- `gold-dbt.yml` writes `YYYYMMDD_HHMMSS_<8hex>_gold.log` capturing the warehouse used, model build count, tests passed, tests failed, and per-model rows_affected.
+- `maintenance-weekly.yml` writes `YYYYMMDD_HHMMSS_<8hex>_maintenance.log` capturing the per-SQL-statement state and the trimmed statement text.
+- `log-rotation-daily.yml` writes `YYYYMMDD_HHMMSS_<8hex>_rotation.log` capturing the retention window, deleted count, kept count, skipped count.
+
+All filenames keep the `YYYYMMDD_` prefix so `maintenance/log_rotation.py`'s regex rotates them at 50 days regardless of stage.
+
+All commit steps use `[skip ci]` and `pull --rebase --autostash` before push so concurrent log writers (Silver finishing right as Gold finishes) do not race.
+
+End-to-end verification run on 2026-06-04:
+- Bronze   (run 26923981686): SKIPPED (hashes unchanged for all three symbols), wrote `20260604_012306_6ce281d7.log`
+- Silver   (run 26924020852): SUCCESS, 3,277,567 rows MERGE'd, wrote `20260604_012541_ec2b6fcc_silver.log`
+- Gold     (run 26924115017): SUCCESS, 3 models built, 25 tests passed, wrote `20260604_012844_1d291501_gold.log`
+- Rotation (run 26924230634): SUCCESS, 10 logs kept, 0 deleted (none old enough), wrote `20260604_012910_050ea16c_rotation.log`
+
+This crosses off one of the five Phase 9 polish items (the "queryable pipeline-run-log" item is now half-done as a Markdown trail; a Delta-backed version is still future work).
+
 ### 2026-06-03 — Phases 5 through 8 done (project complete)
 
 All planned phases shipped today. Concrete state of every layer:
