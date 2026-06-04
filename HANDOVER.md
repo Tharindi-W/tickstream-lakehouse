@@ -56,6 +56,36 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-03 — Phases 5 through 8 done (project complete)
+
+All planned phases shipped today. Concrete state of every layer:
+
+**Observability (Phase 5).**
+
+- `maintenance/log_rotation.py` parses YYYYMMDD prefix from `logs/runs/*.log` filenames and deletes anything older than `retention.pipeline_log_days` from `config/pipeline.yml` (50 days default).
+- `.github/workflows/log-rotation-daily.yml` runs at 05:15 UTC and commits the deletions back to the repo with `[skip ci]`.
+- `dashboard/` holds five hand-written SQL queries (`data_freshness`, `symbol_overview`, `daily_volume_trend`, `intraday_price_path`, `dq_summary`) that paste directly into the Databricks SQL editor or compose into a Lakeview dashboard. `dashboard/README.md` documents the intended use.
+- Pipeline-run-log Delta table and Grafana Cloud ops dashboard are NOT done. Logged as Phase 9 polish in this document; the `logs/runs/*.log` files plus the per-job ntfy alerts cover the same need at portfolio scale.
+
+**Governance (Phase 6).**
+
+- `governance/role_access_matrix.md` defines four roles and a resource-by-resource access matrix, including the exact UC GRANT statements that would map this to paid Databricks.
+- `governance/data_dictionary.md` documents every column of Bronze, Silver, and Gold with type, source, and sensitivity classification (every column is PUBLIC or INTERNAL by design; no PII).
+- `governance/schema_evolution.md` is the playbook for adding or removing columns at each layer, including backfill notes for Silver and Gold.
+- `governance/data_contracts/bronze_agg_trades.py` and `silver_agg_trades.py` are Pydantic models codifying the exact shape each layer guarantees. Pydantic is an optional import so the contract degrades to a no-op if the runtime does not have it.
+
+**Archival (Phase 7).**
+
+- `maintenance/optimize_vacuum.sql` runs `OPTIMIZE` with ZORDER on the natural-key columns for Silver and on `hour_bucket` for Gold hourly, then `VACUUM RETAIN 720 HOURS` (30 days) on Silver and both Gold tables.
+- `.github/workflows/maintenance-weekly.yml` runs the above every Sunday at 04:00 UTC via the SQL Statement Execution API.
+- `maintenance/adls_lifecycle_policy.json` is the Azure lifecycle policy: Hot-to-Cool at 2 years, Cool-to-Archive at 5 years for Bronze; `bad-records/` purged at 90 days. Applied to the storage account via `az storage account management-policy create`.
+- `governance/archival_policy.md` explains the tiering, the Delta-on-ADLS rehydrate caveat, and projected costs (under AU$3/month year one, under AU$10/month after a decade of unmanaged growth).
+
+**Polish (Phase 8).**
+
+- `.github/workflows/ingest-bronze-hourly.yml` is renamed in the `name:` field to `ingest-bronze-daily` and the cron is switched from `0 * * * *` to `0 6 * * *` (06:00 UTC daily, just after Binance publishes the previous day's file). The filename is kept as `ingest-bronze-hourly.yml` to preserve commit and run history; the on-schedule cadence is what changed.
+- README rewritten to surface the "all eight phases complete" status, a Phases-at-a-glance table, an updated Mermaid architecture diagram covering log rotation, dbt, dashboards, and maintenance.
+
 ### 2026-06-03 — Phase 4 done (Gold dbt)
 
 Three Gold models materialised in Databricks UC, all dbt tests pass.

@@ -1,9 +1,15 @@
-name: ingest-bronze-hourly
+name: ingest-bronze-daily
+
+# Schedule reset (Phase 8): switched from hourly (0 * * * *) to daily at
+# 06:00 UTC, which is shortly after Binance Vision publishes the previous
+# day's file. Hourly runs were useful during development to exercise the
+# "no new data" path; daily is the steady-state cadence.
+# To revert temporarily for dev work, change the cron back to '0 * * * *'.
 
 on:
   schedule:
-    - cron: '0 * * * *'      # every hour, on the hour (Week 1 cadence)
-  workflow_dispatch:           # manual trigger always available
+    - cron: '0 6 * * *'        # 06:00 UTC daily (steady state)
+  workflow_dispatch:             # manual trigger always available
 
 permissions:
   contents: write              # for committing logs/runs/ and state/ back to repo

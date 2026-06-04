@@ -3,9 +3,23 @@
 End-to-end financial data pipeline on real public crypto tick data. Built entirely on GitHub plus free-tier cloud services. Demonstrates production-grade data engineering: medallion architecture, Delta Lake, PySpark on Databricks, dbt, vault-backed secrets, plain-English handover logs, observability, and data governance.
 
 **Owner**: [Tharindi-W](https://github.com/Tharindi-W)
-**Status**: Phase 3 complete, Phase 4 (Gold + dbt) in progress
+**Status**: all eight phases complete
 **Data**: real public crypto tick data from [Binance Vision](https://data.binance.vision/)
 **Cost**: $0 (free tiers only)
+
+## Phases at a glance
+
+| Phase | Output | Verifiable by |
+|---|---|---|
+| 0 Scaffold | Public repo, README, HANDOVER, LEARNING, .gitignore, config stub | This page |
+| 1 Vault chain | Infisical project + machine identity, ntfy webhook, 3 GitHub bootstrap secrets | `phase-1-smoke-test.yml` runs green |
+| 2 Bronze ingestion | Hourly GitHub Actions writes raw zips + Bronze Delta to ADLS + parquet to UC Volume | `ingest-bronze-hourly.yml` + `logs/runs/` |
+| 3 Silver transformation | PySpark on Databricks Free Edition Serverless writes `workspace.default.silver_agg_trades` via Delta MERGE | `silver-transform.yml` |
+| 4 Gold modelling | dbt-spark builds `gold_ohlcv_daily`, `gold_ohlcv_hourly`, `gold_symbol_summary` with 25 tests passing | `gold-dbt.yml` |
+| 5 Observability | 50-day log rotation + Databricks SQL dashboard queries | `log-rotation-daily.yml`, `dashboard/` |
+| 6 Governance | Role access matrix, data dictionary, schema evolution policy, Pydantic data contracts | `governance/` |
+| 7 Archival | Weekly OPTIMIZE + VACUUM workflow + ADLS lifecycle policy with Hot/Cool/Archive tiers | `maintenance-weekly.yml`, `maintenance/adls_lifecycle_policy.json` |
+| 8 Polish | Bronze cron switched from hourly dev to daily steady state; README finalised | This page
 
 ## What works today
 
@@ -47,31 +61,40 @@ You will see three rows, one per symbol, with real averages and volumes from the
 ```mermaid
 flowchart LR
     A[Binance Vision<br/>data.binance.vision]
-    B[GitHub Actions<br/>hourly ingestion]
+    B[GitHub Actions<br/>daily cron + dispatch]
     O[Infisical Vault]
     D[ADLS Gen2<br/>bronze raw zips]
-    F[Bronze Delta<br/>+ audit cols<br/>delta-rs on runner]
-    V[UC Volume<br/>parquet copy<br/>for Spark]
-    E[Databricks Free Edition<br/>Serverless Spark]
-    G[Silver Delta<br/>UC managed table<br/>workspace.default.silver_agg_trades]
-    H[dbt-spark<br/>Gold models]
-    I[Gold tables<br/>OHLCV, VWAP, volatility]
-    K[ntfy webhook<br/>alerts]
-    L[logs/runs/<br/>plain-English audit trail<br/>committed to repo]
+    F[Bronze Delta<br/>delta-rs on runner]
+    V[UC Volume<br/>parquet copy]
+    E[Databricks<br/>Serverless Spark]
+    G[Silver Delta<br/>workspace.default.silver_agg_trades]
+    H[dbt-spark]
+    I[Gold tables<br/>gold_ohlcv_daily<br/>gold_ohlcv_hourly<br/>gold_symbol_summary]
+    M[Databricks SQL<br/>dashboard queries]
+    R[Log rotation<br/>50-day window]
+    W[Weekly OPTIMIZE<br/>+ VACUUM]
+    K[ntfy webhook]
+    L[logs/runs/<br/>committed audit trail]
 
-    A -->|hourly| B
-    B -->|fetches secrets| O
-    B -->|raw zip| D
-    B -->|Bronze Delta write| F
-    B -->|parquet upload via Files API| V
-    B -->|triggers Jobs API| E
-    E -->|reads| V
-    E -->|writes MERGE| G
+    A -->|daily| B
+    B -->|secrets| O
+    B --> D
+    B --> F
+    B -->|Files API| V
+    B -->|Jobs API| E
+    E --> V
+    E -->|MERGE| G
     G --> H
     H --> I
+    I --> M
+    G --> M
     B --> L
+    R --> L
+    W -.OPTIMIZE+VACUUM.-> G
+    W -.OPTIMIZE+VACUUM.-> I
     B --> K
     E --> K
+    H --> K
 ```
 
 ## Stack (everything free)

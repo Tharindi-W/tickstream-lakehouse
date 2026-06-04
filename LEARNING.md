@@ -384,6 +384,52 @@ If you ever set up multiple SQL warehouses with different scaling profiles, this
 
 dbt-databricks 1.9+ emits a deprecation warning for the way we declare `accepted_values` tests. The runs pass clean today but the syntax will eventually need a tweak. Recorded in HANDOVER for follow-up.
 
-### Phase 5 — coming next
+### Phases 5 through 8 done — project complete (2026-06-03)
 
-Observability and ops. A Databricks SQL dashboard reading from the Gold tables (data dashboard), a Grafana Cloud dashboard reading from a pipeline_run_log Delta table that Silver and Bronze update (ops dashboard), 50-day log rotation on `logs/runs/`, and an OpenLineage emitter to a self-hosted Marquez instance for cross-job lineage.
+The remaining four phases shipped as four focused commits. Each one is small enough to read end to end. Together they take the project from "Gold built but undocumented" to "complete and handoverable".
+
+#### Phase 5: Observability
+
+The most expensive observability components (Grafana Cloud, OpenLineage to a self-hosted Marquez) were de-scoped honestly. They are recorded as "Phase 9 polish" in HANDOVER. What landed instead is the right minimum for a portfolio: a 50-day rotation on the human-readable run logs, plus five SQL queries reviewers can paste into the Databricks SQL editor to inspect freshness, headline rollups, daily volume trends, intraday OHLCV, and DQ summary.
+
+**What you can learn from `dashboard/data_freshness.sql`**: it answers "how many hours behind is each symbol right now" with a single GROUP BY and a `DATEDIFF`. The kind of query that sits at the top of every real ops dashboard.
+
+#### Phase 6: Governance
+
+This is the phase where a portfolio project either earns or loses an interviewer's confidence. We landed four pieces:
+
+- **Role access matrix** that enumerates every resource and every role, including the UC GRANT statements that would activate it in paid Databricks. The matrix shows you understand that roles are not just `admin` and `reader`.
+- **Data dictionary** that covers every column in every table with type, source, and sensitivity. Includes a clear statement that NO column is PII because this is public market data. This is exactly the right answer to "what is your PII strategy" in an interview: the explicit, defensible "none" beats hand-wavy "everything is encrypted just in case".
+- **Schema evolution policy** as the playbook for what to do when Binance changes the source schema (which they have, repeatedly). Names the symptoms and the actions step by step.
+- **Pydantic data contracts** for Bronze and Silver. They are not yet wired into the pipeline as runtime checks, but the file existing in `governance/data_contracts/` means a future PR that breaks the shape requires explicitly editing this file, which forces a conversation.
+
+#### Phase 7: Archival
+
+Two artefacts that demonstrate cost awareness:
+
+- **Weekly OPTIMIZE + VACUUM** via a SQL Statement Execution workflow. Splits the SQL file on `;` and runs each statement through the API one at a time, because the API only accepts one statement per call. This is the kind of detail a hiring manager probes for.
+- **ADLS lifecycle policy** that tiers Bronze raw to Cool after 2 years, Archive after 5 years, and deletes bad-records after 90 days. Lives as JSON in version control. Applied to the storage account via a one-line `az` command documented in `governance/archival_policy.md`.
+
+The archival doc also has a quiet but important caveat: Delta on ADLS does not have first-class lifecycle awareness, so Silver and Gold stay in Hot regardless of age. We rely on VACUUM and good partition design to keep their footprint bounded. This is the kind of nuance a junior would miss and a senior would catch.
+
+#### Phase 8: Polish
+
+Bronze cron switched from hourly (development cadence, useful for exercising the "no new data" path repeatedly) to daily at 06:00 UTC (steady state, shortly after Binance publishes). The filename `ingest-bronze-hourly.yml` stays for run-history continuity; the cron and the workflow `name:` change.
+
+README rewritten with an "all phases complete" status, a phases-at-a-glance table that links each phase to the workflow or folder you can use to verify it, and an updated architecture diagram that includes log rotation, dbt, dashboards, and the weekly maintenance loop.
+
+#### What this project does not do (yet)
+
+For the next person picking this up:
+
+- No pipeline-run-log Delta table. The Markdown files plus ntfy cover this at our scale, but a real ops team would want a queryable Delta table.
+- No Grafana Cloud ops dashboard. Same reason.
+- No OpenLineage / Marquez. Lineage today is implicit in dbt's DAG and in the explicit handover doc.
+- No PR-gated CI for the Python code (lint, type-check, sample-data integration test). The dbt build acts as Gold CI, but Bronze and Silver Python is currently linted only by the author's eye.
+- No formal disaster recovery runbook. The storage tiering documents one half (cold rehydrate), but a full DR scenario (e.g., losing the Databricks workspace) is not written down.
+
+These five items are the Phase 9 polish list. Each one is small enough to land in an afternoon.
+
+### Closing thought
+
+If you have followed along to here, you have built a real, working lakehouse that ingests real, public, daily-updated data through a real medallion architecture using real PySpark and real dbt, all entirely on free tiers, with vault-backed secrets and a plain-English audit trail in version control. The conversation with the agent that built this is in the repo's commit history. Read it like a postmortem. Every decision, including the dead ends, is recorded with timestamps and error traces.
