@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # for committing logs/runs/ entries back to the repo
 
 concurrency:
   group: gold-dbt
@@ -131,7 +131,53 @@ jobs:
              | "\(.unique_id | sub("model.tickstream."; ""))=\(.adapter_response.rows_affected // 0)"]
             | join(", ")' target/run_results.json 2>/dev/null || echo "see logs")
 
+          # Count test pass/fail from dbt's run_results.json for the log
+          PASS_COUNT=$(jq -r '[.results[] | select(.status == "pass")] | length' target/run_results.json 2>/dev/null || echo "?")
+          FAIL_COUNT=$(jq -r '[.results[] | select(.status == "fail")] | length' target/run_results.json 2>/dev/null || echo "?")
+          MODEL_COUNT=$(jq -r '[.results[] | select(.unique_id | startswith("model."))] | length' target/run_results.json 2>/dev/null || echo "?")
+
           curl -sS -X POST "$ALERT_WEBHOOK_URL" \
             -H "Title: TickStream Gold dbt SUCCESS" -H "Tags: white_check_mark" \
             -d "Gold dbt build + tests passed at $(date -u +%Y-%m-%dT%H:%M:%SZ). Rows: ${ROWS}" > /dev/null
           echo "Sent success alert to ntfy."
+
+          # --- Write per-run Markdown log to logs/runs/ ---
+          cd "${GITHUB_WORKSPACE}"
+          END_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LOG_PREFIX=$(date -u +%Y%m%d_%H%M%S)
+          SHORT_ID=$(openssl rand -hex 4)
+          LOG_FILE="logs/runs/${LOG_PREFIX}_${SHORT_ID}_gold.log"
+          mkdir -p logs/runs
+          {
+            echo "# Gold dbt pipeline run"
+            echo ""
+            echo "- Workflow:  ${GITHUB_WORKFLOW}"
+            echo "- Run URL:   https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Triggered: ${GITHUB_EVENT_NAME}"
+            echo "- Warehouse: ${WAREHOUSE_NAME} (id ${WAREHOUSE_ID})"
+            echo ""
+            echo "## Result"
+            echo ""
+            echo "- Status:        **SUCCESS**"
+            echo "- Models built:  ${MODEL_COUNT}"
+            echo "- Tests passed:  ${PASS_COUNT}"
+            echo "- Tests failed:  ${FAIL_COUNT}"
+            echo "- Rows affected: ${ROWS}"
+            echo "- Ended at (UTC): ${END_ISO}"
+          } > "$LOG_FILE"
+          echo "Wrote run log: $LOG_FILE"
+
+      - name: Commit run log
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.name  "tickstream-bot"
+          git config user.email "bot@tickstream.local"
+          git add logs/runs/ || true
+          if git diff --cached --quiet; then
+            echo "No new log to commit."
+            exit 0
+          fi
+          git commit -m "chore(gold): run log ${{ github.run_id }} [skip ci]"
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main

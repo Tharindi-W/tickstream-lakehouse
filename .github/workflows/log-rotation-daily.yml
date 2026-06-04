@@ -27,13 +27,44 @@ jobs:
       - name: Install deps
         run: pip install pyyaml
 
-      - name: Rotate logs
+      - name: Rotate logs and emit a run log
         env:
           PYTHONPATH: .
         run: |
-          python -m maintenance.log_rotation
+          set -euo pipefail
+          ROTATION_OUTPUT=$(python -m maintenance.log_rotation)
+          echo "$ROTATION_OUTPUT"
 
-      - name: Commit deletions back to repo
+          # Capture summary fields for the run log
+          DELETED=$(echo "$ROTATION_OUTPUT" | grep -E '^Deleted:'   | awk '{print $2}')
+          KEPT=$(echo "$ROTATION_OUTPUT"    | grep -E '^Kept:'      | awk '{print $2}')
+          SKIPPED=$(echo "$ROTATION_OUTPUT" | grep -E '^Skipped:'   | awk '{print $2}')
+          RETENTION=$(echo "$ROTATION_OUTPUT" | grep -E '^Retention:' | sed 's/^Retention: //')
+
+          END_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LOG_PREFIX=$(date -u +%Y%m%d_%H%M%S)
+          SHORT_ID=$(openssl rand -hex 4)
+          LOG_FILE="logs/runs/${LOG_PREFIX}_${SHORT_ID}_rotation.log"
+          mkdir -p logs/runs
+          {
+            echo "# Log rotation run"
+            echo ""
+            echo "- Workflow:  ${GITHUB_WORKFLOW}"
+            echo "- Run URL:   https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Triggered: ${GITHUB_EVENT_NAME}"
+            echo ""
+            echo "## Result"
+            echo ""
+            echo "- Status:    **SUCCESS**"
+            echo "- ${RETENTION}"
+            echo "- Deleted:   ${DELETED:-0}"
+            echo "- Kept:      ${KEPT:-0}"
+            echo "- Skipped:   ${SKIPPED:-0}"
+            echo "- Ended at (UTC): ${END_ISO}"
+          } > "$LOG_FILE"
+          echo "Wrote run log: $LOG_FILE"
+
+      - name: Commit log rotation results back to repo
         if: always()
         run: |
           set -euo pipefail
@@ -41,9 +72,9 @@ jobs:
           git config user.email "bot@tickstream.local"
           git add logs/runs/ || true
           if git diff --cached --quiet; then
-            echo "No log files were deleted this run."
+            echo "No log file changes to commit."
             exit 0
           fi
-          git commit -m "chore(logs): rotate logs/runs/ older than retention window [skip ci]"
+          git commit -m "chore(logs): rotation run ${{ github.run_id }} [skip ci]"
           git pull --rebase --autostash origin main
           git push origin HEAD:main
