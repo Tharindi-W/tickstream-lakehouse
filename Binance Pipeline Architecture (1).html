@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Binance Crypto Data Pipeline — Architecture</title>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+  :root{
+    --ink:#1f2733; --ink-soft:#54607a; --muted:#7a869c;
+    --line:#cbd3e0;
+    /* lane palettes: bg, border, badge, accent, tile */
+    --src-bg:#eaf2fb; --src-bd:#a9c6ea; --src-bdg:#2f6fb5; --src-ac:#1f4e79; --src-tile:#dceaf9;
+    --ing-bg:#f1ecf9; --ing-bd:#c8b6e6; --ing-bdg:#6c4fb5; --ing-ac:#4a328c; --ing-tile:#e8dffa;
+    --sto-bg:#e9f5ec; --sto-bd:#abd4b7; --sto-bdg:#2e8b57; --sto-ac:#1e6b40; --sto-tile:#dcf0e2;
+    --pro-bg:#fbf3e2; --pro-bd:#e7d2a0; --pro-bdg:#bf8a2e; --pro-ac:#8a6320; --pro-tile:#f6e9cd;
+    --trf-bg:#fceee3; --trf-bd:#eec7a4; --trf-bdg:#d2762e; --trf-ac:#a4521a; --trf-tile:#f8e2d0;
+    --srv-bg:#fbeb ea; --srv-bg:#fbebea; --srv-bd:#edb9b4; --srv-bdg:#c65a52; --srv-ac:#9b3b34; --srv-tile:#f7dcd9;
+    --ops-bg:#efeaf6; --ops-bd:#c9bae3; --ops-bdg:#6c4fb5; --ops-ac:#4a328c; --ops-tile:#e7ddf4;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:#eef1f6;
+    font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);-webkit-font-smoothing:antialiased;}
+  .wrap{display:flex;justify-content:center;padding:28px 18px;}
+  .stage{position:relative;width:1480px;height:872px;background:#ffffff;
+    border:1px solid #e2e6ee;border-radius:16px;
+    box-shadow:0 18px 48px -22px rgba(31,39,51,.28);overflow:hidden;}
+
+  /* ---- header ---- */
+  .title{position:absolute;left:34px;top:22px;z-index:6;white-space:nowrap;}
+  .title h1{margin:0;font-size:21px;font-weight:700;letter-spacing:-.2px;color:var(--ink);}
+  .title p{margin:3px 0 0;font-size:12.5px;font-weight:500;color:var(--muted);letter-spacing:.2px;}
+
+  /* ---- lanes ---- */
+  .lane{position:absolute;border:1.6px dashed var(--lbd);border-radius:13px;background:var(--lbg);z-index:1;}
+  .lane .lhead{position:absolute;top:12px;left:0;right:0;text-align:center;
+    font-size:11.5px;font-weight:700;letter-spacing:1.2px;color:var(--lac);text-transform:uppercase;}
+
+  /* ---- svg connectors ---- */
+  svg.wires{position:absolute;inset:0;width:1480px;height:872px;z-index:2;pointer-events:none;overflow:visible;}
+  .wire{fill:none;}
+  .wlabel{font-size:11px;font-weight:600;fill:#475067;
+    paint-order:stroke;stroke:#ffffff;stroke-width:3.2px;stroke-linejoin:round;}
+  .wlabel.alt{fill:#a4521a;}
+  .wlabel.mnt{fill:#6b7686;}
+
+  /* ---- nodes ---- */
+  .node{position:absolute;z-index:3;background:#ffffff;border:1.6px solid var(--nbd);
+    border-radius:13px;box-shadow:0 2px 5px -2px rgba(31,39,51,.18),0 1px 0 rgba(255,255,255,.7) inset;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:8px 10px;text-align:center;}
+  .node.dashed{border-style:dashed;}
+  .badge{position:absolute;top:-10px;left:-10px;width:23px;height:23px;border-radius:50%;
+    background:var(--nbdg);color:#fff;font-size:12px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 1px 3px rgba(31,39,51,.35);border:2px solid #fff;z-index:4;}
+  .tile{width:38px;height:38px;border-radius:10px;background:var(--ntile);
+    display:flex;align-items:center;justify-content:center;margin-bottom:6px;flex:none;}
+  .tile img{width:23px;height:23px;display:block;}
+  .tile i{width:22px;height:22px;}
+  .tile svg{width:22px;height:22px;}
+  .nlabel{font-size:12.5px;font-weight:700;line-height:1.15;color:var(--ink);letter-spacing:-.1px;}
+  .nsub{font-size:10px;font-weight:500;line-height:1.2;color:var(--muted);margin-top:3px;
+    font-family:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;letter-spacing:-.2px;}
+
+  /* gold group */
+  .gbox{position:absolute;z-index:2;border:1.5px dashed var(--trf-bd);border-radius:12px;
+    background:rgba(255,255,255,.45);}
+  .gbox .gh{position:absolute;top:8px;left:0;right:0;text-align:center;font-size:10px;
+    font-weight:700;letter-spacing:.6px;color:var(--trf-ac);text-transform:uppercase;}
+  .gbox .gbadge{position:absolute;top:-11px;left:-11px;width:23px;height:23px;border-radius:50%;
+    background:var(--trf-bdg);color:#fff;font-size:12px;font-weight:700;display:flex;
+    align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(31,39,51,.35);border:2px solid #fff;}
+  .mini{position:absolute;z-index:3;background:#fff;border:1.4px solid var(--trf-bd);border-radius:9px;
+    display:flex;align-items:center;gap:8px;padding:0 11px;box-shadow:0 1px 3px -1px rgba(31,39,51,.16);}
+  .mini .mt{width:26px;height:26px;border-radius:7px;background:var(--trf-tile);display:flex;
+    align-items:center;justify-content:center;flex:none;}
+  .mini .mt i,.mini .mt svg{width:16px;height:16px;}
+  .mini .ml{font-size:11.5px;font-weight:650;color:var(--ink);
+    font-family:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;letter-spacing:-.3px;}
+
+  /* legend */
+  .legend{position:absolute;left:34px;bottom:16px;right:34px;height:40px;z-index:5;
+    display:flex;align-items:center;gap:26px;
+    border-top:1px solid #e7eaf1;padding-top:8px;}
+  .leg{display:flex;align-items:center;gap:9px;font-size:11.5px;font-weight:600;color:var(--ink-soft);}
+  .leg .sw{width:42px;height:0;border-top-width:2.4px;border-top-style:solid;position:relative;}
+  .leg .sw::after{content:"";position:absolute;right:-1px;top:-3.5px;border:4px solid transparent;}
+  .leg.solid .sw{border-color:#4a5566;}
+  .leg.solid .sw::after{border-left-color:#4a5566;border-right:0;}
+  .leg.alt .sw{border-color:#c6792e;border-top-style:dashed;}
+  .leg.alt .sw::after{border-left-color:#c6792e;border-right:0;}
+  .leg.mnt .sw{border-color:#99a3b4;border-top-style:dashed;}
+  .leg.mnt .sw::after{border-left-color:#99a3b4;border-right:0;}
+  .leg .step{width:21px;height:21px;border-radius:50%;background:#5566a0;color:#fff;font-size:11px;
+    font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;
+    box-shadow:0 1px 2px rgba(0,0,0,.25);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage" id="stage">
+    <div class="title">
+      <h1>Binance Crypto Data Pipeline</h1>
+      <p>Databricks · Azure · dbt · GitHub Actions&nbsp;&nbsp;—&nbsp;&nbsp;medallion (bronze → silver → gold) architecture</p>
+    </div>
+    <svg class="wires" id="wires" viewBox="0 0 1480 872" preserveAspectRatio="none"></svg>
+  </div>
+</div>
+
+<script>
+/* ============================ LANES ============================ */
+const LANES = [
+  {id:'source',   x:30,   y:94, w:220, h:548, label:'Source',           p:'src'},
+  {id:'ingest',   x:266,  y:94, w:220, h:548, label:'Ingest',           p:'ing'},
+  {id:'storage',  x:502,  y:94, w:220, h:548, label:'Storage · Bronze', p:'sto'},
+  {id:'process',  x:738,  y:94, w:220, h:548, label:'Process · Silver', p:'pro'},
+  {id:'transform',x:974,  y:94, w:220, h:548, label:'Transform · Gold', p:'trf'},
+  {id:'serve',    x:1210, y:94, w:220, h:548, label:'Serve',            p:'srv'},
+  {id:'ops',      x:30,   y:662,w:1400,h:134, label:'Ops · Observability & Maintenance', p:'ops'},
+];
+
+/* ============================ NODES ============================ */
+// icon: {t:'si'|'lc', v:'slug'|'name', c:'hex'(optional override)}
+const NODES = {
+  binance:{x:56, y:294,w:168,h:96, p:'src',step:1, icon:{t:'lc',v:'candlestick-chart'}, label:'Binance Vision', sub:'data.binance.vision'},
+  gh:     {x:292,y:294,w:168,h:96, p:'ing',step:2, icon:{t:'si',v:'githubactions',c:'2088FF'}, label:'GitHub Actions', sub:'daily cron · dispatch'},
+  infisical:{x:292,y:452,w:168,h:84,p:'ing',step:3,icon:{t:'lc',v:'lock'}, label:'Infisical Vault', sub:'secrets store'},
+  adls:   {x:528,y:140,w:168,h:92, p:'sto',step:4, icon:{t:'lc',v:'waves',c:'#0f7bc4'}, label:'ADLS Gen2', sub:'bronze raw zips'},
+  bronze: {x:528,y:296,w:168,h:92, p:'sto',step:5, icon:{t:'lc',v:'database',c:'#b0805a'}, label:'Bronze Delta', sub:'delta-rs on runner'},
+  uc:     {x:528,y:452,w:168,h:92, p:'sto',step:6, icon:{t:'lc',v:'layers',c:'#2e8b57'}, label:'UC Volume', sub:'parquet · Files API'},
+  spark:  {x:764,y:294,w:168,h:96, p:'pro',step:7, icon:{t:'si',v:'databricks',c:'FF3621'}, label:'Databricks Spark', sub:'serverless compute'},
+  silver: {x:764,y:458,w:168,h:84, p:'pro',step:8, icon:{t:'lc',v:'database',c:'#8a929e'}, label:'Silver Delta', sub:'silver_agg_trades'},
+  dbt:    {x:1000,y:140,w:168,h:84,p:'trf',step:9, icon:{t:'txt',v:'dbt',c:'#FF694B'}, label:'dbt-spark', sub:'models · tests'},
+  sql:    {x:1236,y:360,w:168,h:120,p:'srv',step:11,icon:{t:'lc',v:'bar-chart-3',c:'#c65a52'}, label:'Databricks SQL', sub:'dashboard'},
+  // ops
+  audit:  {x:112, y:694,w:176,h:86, p:'ops', icon:{t:'lc',v:'file-check'}, label:'Audit trail', sub:'logs/runs/ in git'},
+  logrot: {x:352, y:694,w:176,h:86, p:'ops', icon:{t:'lc',v:'rotate-cw'}, label:'Log rotation', sub:'50-day window'},
+  ntfy:   {x:672, y:694,w:176,h:86, p:'ops', icon:{t:'lc',v:'bell'}, label:'ntfy', sub:'webhook alerts'},
+  optvac: {x:1002,y:694,w:176,h:86, p:'ops', dashed:true, icon:{t:'lc',v:'settings'}, label:'OPTIMIZE + VACUUM', sub:'weekly · Delta'},
+};
+// gold mini nodes (inside group box)
+const GOLD = {
+  gdaily:  {x:1006,y:312,w:176,h:60, label:'gold_ohlcv_daily'},
+  ghourly: {x:1006,y:400,w:176,h:60, label:'gold_ohlcv_hourly'},
+  gsummary:{x:1006,y:488,w:176,h:60, label:'gold_symbol_summary'},
+};
+const GBOX = {x:992,y:276,w:204,h:296};
+
+/* ============================ EDGES ============================ */
+// styles: 'solid' (primary), 'alt' (dashed colored side-channel/trigger), 'mnt' (dashed gray maintenance)
+// routing: cx | cy | pts:[[x,y]...] (intermediate corners) ; label + optional lx,ly
+const E = [
+  // ---- primary flow ----
+  {f:'binance',fs:'r', t:'gh',ts:'l', s:'solid', label:'daily'},
+  {f:'gh',fs:'r', t:'adls',ts:'l', s:'solid', cx:486},
+  {f:'gh',fs:'r', t:'bronze',ts:'l', s:'solid', cx:486},
+  {f:'gh',fs:'r', t:'uc',ts:'l', s:'solid', cx:486, label:'Files API', lx:480, ly:430, lAnchor:'end'},
+  {f:'uc',fs:'r', t:'spark',ts:'l', s:'solid', cx:730},
+  {f:'spark',fs:'b', t:'silver',ts:'t', s:'solid', label:'MERGE', lx:898, ly:424},
+  {f:'silver',fs:'r', t:'dbt',ts:'l', toOff:6, s:'solid', cx:966},
+  {f:'dbt',fs:'b', t:'gdaily',ts:'l', s:'solid', pts:[[1084,252],[982,252],[982,342]], label:'dbt run', lx:996, ly:240},
+  {f:'dbt',fs:'b', t:'ghourly',ts:'l', s:'solid', pts:[[1084,252],[982,252],[982,430]]},
+  {f:'dbt',fs:'b', t:'gsummary',ts:'l', s:'solid', pts:[[1084,252],[982,252],[982,518]]},
+  {f:'gdaily',fs:'r', t:'sql',ts:'l', toOff:-16, s:'solid', cx:1202},
+  {f:'ghourly',fs:'r', t:'sql',ts:'l', toOff:0, s:'solid', cx:1202},
+  {f:'gsummary',fs:'r', t:'sql',ts:'l', toOff:16, s:'solid', cx:1202},
+  // ---- side-channel / trigger (dashed colored) ----
+  {f:'gh',fs:'b', t:'infisical',ts:'t', s:'alt', label:'secrets', lx:382, ly:424, lAnchor:'start'},
+  {f:'gh',fs:'t', fromOff:52, t:'spark',ts:'t', toOff:58, s:'alt', cy:82, label:'Jobs API (trigger)', lx:667, ly:74},
+  {f:'silver',fs:'b', t:'sql',ts:'b', s:'alt', cy:600, label:'direct query', lx:1010, ly:590},
+  {f:'gh',fs:'r', fromOff:20, t:'ntfy',ts:'t', s:'alt', pts:[[494,360],[494,636],[760,636]]},
+  {f:'spark',fs:'r', fromOff:24, t:'ntfy',ts:'t', s:'alt', pts:[[952,362],[952,640],[760,640]]},
+  {f:'dbt',fs:'l', fromOff:14, t:'ntfy',ts:'t', s:'alt', pts:[[976,194],[976,648],[760,648]]},
+  {f:'gh',fs:'l', fromOff:22, t:'audit',ts:'t', s:'alt', pts:[[258,362],[258,668],[200,668]]},
+  {f:'logrot',fs:'l', t:'audit',ts:'r', s:'alt'},
+  // ---- maintenance (dashed gray) ----
+  {f:'optvac',fs:'t', fromOff:-34, t:'silver',ts:'b', s:'mnt', pts:[[968,664],[848,664]]},
+  {f:'optvac',fs:'t', fromOff:30, t:'gdaily',ts:'b', s:'mnt', pts:[[1120,664],[1094,664]], toNode:'gbox'},
+];
+
+/* ============================ RENDER ============================ */
+const stage = document.getElementById('stage');
+const svg = document.getElementById('wires');
+const SVGNS='http://www.w3.org/2000/svg';
+
+// lanes
+for(const L of LANES){
+  const d=document.createElement('div');
+  d.className='lane';
+  d.style.cssText+=`left:${L.x}px;top:${L.y}px;width:${L.w}px;height:${L.h}px;`+
+    `--lbg:var(--${L.p}-bg);--lbd:var(--${L.p}-bd);--lac:var(--${L.p}-ac);`;
+  d.innerHTML=`<div class="lhead">${L.label}</div>`;
+  stage.appendChild(d);
+}
+// gold group box
+const gb=document.createElement('div');
+gb.className='gbox';
+gb.style.cssText=`left:${GBOX.x}px;top:${GBOX.y}px;width:${GBOX.w}px;height:${GBOX.h}px;`;
+gb.innerHTML=`<div class="gbadge">10</div><div class="gh">Gold Delta tables</div>`;
+stage.appendChild(gb);
+
+function iconHTML(ic){
+  if(ic.t==='si') return `<img src="https://cdn.simpleicons.org/${ic.v}/${ic.c||'444'}" alt="">`;
+  if(ic.t==='txt') return `<span style="width:25px;height:25px;border-radius:50%;background:${ic.c};color:#fff;`+
+    `font-size:10px;font-weight:800;letter-spacing:-.3px;display:flex;align-items:center;justify-content:center;">${ic.v}</span>`;
+  const col = ic.c||'currentColor';
+  return `<i data-lucide="${ic.v}" style="color:${col}"></i>`;
+}
+
+// nodes
+for(const [id,n] of Object.entries(NODES)){
+  const d=document.createElement('div');
+  d.className='node'+(n.dashed?' dashed':'');
+  d.style.cssText=`left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px;`+
+    `--nbd:var(--${n.p}-bd);--nbdg:var(--${n.p}-bdg);--ntile:var(--${n.p}-tile);`;
+  d.innerHTML=`${n.step?`<div class="badge">${n.step}</div>`:''}`+
+    `<div class="tile">${iconHTML(n.icon)}</div>`+
+    `<div class="nlabel">${n.label}</div>`+
+    (n.sub?`<div class="nsub">${n.sub}</div>`:'');
+  stage.appendChild(d);
+}
+// gold minis
+for(const [id,g] of Object.entries(GOLD)){
+  const d=document.createElement('div');
+  d.className='mini';
+  d.style.cssText=`left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px;`;
+  d.innerHTML=`<div class="mt"><i data-lucide="database" style="color:#c29a1f"></i></div><div class="ml">${g.label}</div>`;
+  stage.appendChild(d);
+}
+
+/* ---- connector geometry ---- */
+function rect(id){ return NODES[id]||GOLD[id]||(id==='gbox'?GBOX:null); }
+function anchor(id,side,off=0){
+  const n=rect(id);
+  switch(side){
+    case 'l': return {x:n.x,        y:n.y+n.h/2+off};
+    case 'r': return {x:n.x+n.w,    y:n.y+n.h/2+off};
+    case 't': return {x:n.x+n.w/2+off, y:n.y};
+    case 'b': return {x:n.x+n.w/2+off, y:n.y+n.h};
+  }
+}
+function points(e){
+  const S=anchor(e.f,e.fs,e.fromOff||0);
+  const T= e.toNode==='gbox' ? anchor('gbox',e.ts,e.toOff||0) : anchor(e.t,e.ts,e.toOff||0);
+  let pts;
+  if(e.pts) pts=[S,...e.pts.map(p=>({x:p[0],y:p[1]})),T];
+  else if(e.cx!=null) pts=[S,{x:e.cx,y:S.y},{x:e.cx,y:T.y},T];
+  else if(e.cy!=null) pts=[S,{x:S.x,y:e.cy},{x:T.x,y:e.cy},T];
+  else if(S.x===T.x||S.y===T.y) pts=[S,T];
+  else {const cx=(S.x+T.x)/2; pts=[S,{x:cx,y:S.y},{x:cx,y:T.y},T];}
+  return pts;
+}
+function roundedD(pts,r=8){
+  if(pts.length<3) return `M${pts[0].x} ${pts[0].y} L${pts[pts.length-1].x} ${pts[pts.length-1].y}`;
+  let d=`M${pts[0].x} ${pts[0].y}`;
+  for(let i=1;i<pts.length-1;i++){
+    const p0=pts[i-1],p1=pts[i],p2=pts[i+1];
+    const v1={x:p1.x-p0.x,y:p1.y-p0.y}, v2={x:p2.x-p1.x,y:p2.y-p1.y};
+    const l1=Math.hypot(v1.x,v1.y)||1, l2=Math.hypot(v2.x,v2.y)||1;
+    const rr=Math.min(r,l1/2,l2/2);
+    const a={x:p1.x-v1.x/l1*rr,y:p1.y-v1.y/l1*rr};
+    const b={x:p1.x+v2.x/l2*rr,y:p1.y+v2.y/l2*rr};
+    d+=` L${a.x} ${a.y} Q${p1.x} ${p1.y} ${b.x} ${b.y}`;
+  }
+  const last=pts[pts.length-1];
+  d+=` L${last.x} ${last.y}`;
+  return d;
+}
+
+// markers
+const STY={
+  solid:{stroke:'#4a5566',w:2.2,dash:null,m:'arS'},
+  alt:{stroke:'#c6792e',w:1.8,dash:'6 4',m:'arA'},
+  mnt:{stroke:'#99a3b4',w:1.6,dash:'4 4',m:'arM'},
+};
+const defs=document.createElementNS(SVGNS,'defs');
+for(const [k,c] of [['arS','#4a5566'],['arA','#c6792e'],['arM','#99a3b4']]){
+  const m=document.createElementNS(SVGNS,'marker');
+  m.setAttribute('id',k);m.setAttribute('viewBox','0 0 10 10');
+  m.setAttribute('refX','8');m.setAttribute('refY','5');
+  m.setAttribute('markerWidth','7');m.setAttribute('markerHeight','7');
+  m.setAttribute('orient','auto-start-reverse');
+  const p=document.createElementNS(SVGNS,'path');
+  p.setAttribute('d','M0 0 L10 5 L0 10 L3 5 Z');p.setAttribute('fill',c);
+  m.appendChild(p);defs.appendChild(m);
+}
+svg.appendChild(defs);
+
+// draw wires
+for(const e of E){
+  const sty=STY[e.s];
+  const pts=points(e);
+  const path=document.createElementNS(SVGNS,'path');
+  path.setAttribute('class','wire');
+  path.setAttribute('d',roundedD(pts));
+  path.setAttribute('stroke',sty.stroke);
+  path.setAttribute('stroke-width',sty.w);
+  if(sty.dash) path.setAttribute('stroke-dasharray',sty.dash);
+  path.setAttribute('marker-end',`url(#${sty.m})`);
+  path.setAttribute('stroke-linecap','round');
+  svg.appendChild(path);
+  if(e.label){
+    let lx=e.lx, ly=e.ly;
+    if(lx==null){ // midpoint of first segment
+      lx=(pts[0].x+pts[1].x)/2; ly=(pts[0].y+pts[1].y)/2-7;
+    }
+    const t=document.createElementNS(SVGNS,'text');
+    t.setAttribute('class','wlabel'+(e.s==='alt'?' alt':e.s==='mnt'?' mnt':''));
+    t.setAttribute('x',lx);t.setAttribute('y',ly);
+    t.setAttribute('text-anchor',e.lAnchor||'middle');
+    t.textContent=e.label;
+    svg.appendChild(t);
+  }
+}
+
+/* ---- legend ---- */
+const lg=document.createElement('div');
+lg.className='legend';
+lg.innerHTML=
+  `<div class="leg solid"><span class="sw"></span>Primary data flow</div>`+
+  `<div class="leg alt"><span class="sw"></span>Side-channel / trigger</div>`+
+  `<div class="leg mnt"><span class="sw"></span>Maintenance</div>`+
+  `<div class="leg" style="margin-left:auto"><span class="step">n</span>Numbered flow step</div>`;
+stage.appendChild(lg);
+
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>
