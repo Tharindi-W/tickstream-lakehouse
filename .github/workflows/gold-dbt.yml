@@ -5,6 +5,10 @@ name: gold-dbt
 # in STOPPED state, then runs `dbt build` (run + test) and reports to ntfy.
 
 on:
+  workflow_run:
+    workflows: ["silver-transform"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +20,9 @@ concurrency:
 
 jobs:
   gold:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -1,9 +1,16 @@
 name: silver-transform
 
-# Manual for the first iteration. Will be wired to workflow_run after we
-# observe a few clean Silver runs end to end.
+# Two trigger paths:
+# 1. workflow_run: fires automatically whenever ingest-bronze-daily
+#    (legacy file name ingest-bronze-hourly.yml) finishes with conclusion
+#    success on the main branch. This is the steady-state chain.
+# 2. workflow_dispatch: manual re-run, with an optional batch_date filter.
 
 on:
+  workflow_run:
+    workflows: ["ingest-bronze-daily"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       batch_date:
@@ -20,6 +27,11 @@ concurrency:
 
 jobs:
   silver:
+    # Skip the run if Bronze finished but did NOT succeed. workflow_dispatch
+    # has no workflow_run context, so we let it through unconditionally.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
