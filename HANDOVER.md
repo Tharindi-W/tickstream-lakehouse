@@ -56,6 +56,23 @@ The data is real, public, and free: crypto tick data from `data.binance.vision`.
 | 12. Time-intelligent archival | ADLS Gen2 lifecycle policy: Hot 0-2y, Cool 2-5y, Archive 5y+ |
 | 13. Other enterprise concerns | dbt tests, OpenLineage to Marquez, data contracts as Pydantic models, PR-gated CI, pre-commit, backfill runbook, SLO, schema evolution policy, DR note, incident runbook |
 
+### 2026-06-04 — Bronze→Silver→Gold chain wired via workflow_run
+
+A reviewer (the owner) pointed out that the GitHub Actions "Scheduled" tab only listed Bronze, because Silver and Gold were workflow_dispatch only. Fixed today.
+
+- `silver-transform.yml` now triggers on `workflow_run` after `ingest-bronze-daily` completes with `conclusion=success` on `main`. Manual `workflow_dispatch` still works for ad-hoc reruns.
+- `gold-dbt.yml` now triggers on `workflow_run` after `silver-transform` completes with `conclusion=success` on `main`. Manual `workflow_dispatch` still works.
+- Each job uses an `if:` guard so manual dispatch passes unconditionally, but workflow_run only passes when the upstream conclusion is `success`. A Bronze failure does NOT cascade into Silver, and a Silver failure does NOT cascade into Gold.
+
+Note about the GitHub Actions UI: workflow_run-triggered runs do NOT appear in the "Scheduled" tab because they are not on cron. They appear under the regular runs of their own workflow, with the trigger column showing `workflow_run`. The "Scheduled" tab will still only show Bronze, log rotation, and weekly maintenance because those are the only cron-driven workflows.
+
+End-to-end chain verification on 2026-06-04 at 02:04 UTC:
+- Bronze   (run 26925562555, workflow_dispatch): SKIPPED in 47s, wrote `20260604_020536_72bc7d05.log`
+- Silver   (run 26925590829, workflow_run): SUCCESS in 2m9s, wrote `20260604_020749_98eaa2e3_silver.log`
+- Gold     (run 26925666803, workflow_run): SUCCESS in 2m42s, wrote `20260604_021033_1c46b526_gold.log`
+
+Total wall clock from Bronze dispatch to Gold complete: under six minutes, fully automated, with a Markdown audit trail for every layer in `logs/runs/`.
+
 ### 2026-06-04 — every workflow now writes a per-run log (Phase 9 partial)
 
 A reviewer pointed out that only Bronze was leaving Markdown breadcrumbs in `logs/runs/`. Silver, Gold, weekly maintenance, and log rotation all had observability via GitHub Actions UI and ntfy, but nothing in the repo. Fixed.
