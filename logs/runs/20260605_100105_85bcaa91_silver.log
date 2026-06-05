@@ -1,0 +1,15 @@
+# Silver pipeline run silver_20260605_095840_3320
+
+- Workflow:        silver-transform
+- Run URL:         https://github.com/Tharindi-W/tickstream-lakehouse/actions/runs/27008346921
+- Triggered:       workflow_run
+- Batch date:      ALL
+- Databricks run:  242648587492144
+- Task run:        533956037524340
+
+## Result
+
+- Status:         **SUCCESS**
+- State message:  (none)
+- Notebook exit:  {'silver_run_id': 'silver_20260605_095840_3320', 'batch_date_filter': 'ALL', 'bronze_rows_in_scope': 11794513, 'silver_rows_written': 11794513, 'duplicates_dropped': 0, 'target_table': 'workspace.default.silver_agg_trades'}
+- Ended at (UTC): 2026-06-05T10:01:05Z
