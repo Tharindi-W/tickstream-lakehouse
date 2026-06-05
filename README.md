@@ -56,6 +56,7 @@ ORDER BY symbol;
 
 You will see three rows, one per symbol, with real averages and volumes from the most recently processed UTC day.
 
+ntfy - https://ntfy.sh/tickstream-alerts-8beed391b48e4071
 ## Architecture
 
 ```mermaid
