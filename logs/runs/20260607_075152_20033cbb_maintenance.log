@@ -1,0 +1,23 @@
+# Weekly maintenance run
+
+- Workflow:  maintenance-weekly
+- Run URL:   https://github.com/Tharindi-W/tickstream-lakehouse/actions/runs/27086570390
+- Triggered: schedule
+
+## Result
+
+- Status:     **PARTIAL**
+- Statements: 6 / 9 succeeded
+- Ended at (UTC): 2026-06-07T07:51:52Z
+
+## Statements
+
+- SUCCEEDED: OPTIMIZE workspace.default.silver_agg_trades
+- FAILED: ZORDER BY (transact_time, agg_trade_id);
+- SUCCEEDED: OPTIMIZE workspace.default.gold_ohlcv_daily;
+- SUCCEEDED: OPTIMIZE workspace.default.gold_ohlcv_hourly
+- FAILED: ZORDER BY (hour_bucket);
+- SUCCEEDED: VACUUM workspace.default.silver_agg_trades  RETAIN 720 HOURS;
+- SUCCEEDED: VACUUM workspace.default.gold_ohlcv_daily   RETAIN 720 HOURS;
+- SUCCEEDED: VACUUM workspace.default.gold_ohlcv_hourly  RETAIN 720 HOURS;
+- FAILED: ;
