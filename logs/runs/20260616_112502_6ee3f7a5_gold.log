@@ -1,0 +1,15 @@
+# Gold dbt pipeline run
+
+- Workflow:  gold-dbt
+- Run URL:   https://github.com/Tharindi-W/tickstream-lakehouse/actions/runs/27613969132
+- Triggered: workflow_run
+- Warehouse: Serverless Starter Warehouse (id c44e2e4aa7b8bf89)
+
+## Result
+
+- Status:        **SUCCESS**
+- Models built:  3
+- Tests passed:  25
+- Tests failed:  0
+- Rows affected: gold_ohlcv_daily=0, gold_ohlcv_hourly=0, gold_symbol_summary=0
+- Ended at (UTC): 2026-06-16T11:25:02Z
