@@ -1,0 +1,14 @@
+# Log rotation run
+
+- Workflow:  log-rotation-daily
+- Run URL:   https://github.com/Tharindi-W/tickstream-lakehouse/actions/runs/27750893517
+- Triggered: schedule
+
+## Result
+
+- Status:    **SUCCESS**
+- 50 days (cutoff date 2026-04-29)
+- Deleted:   0
+- Kept:      72
+- Skipped:   0
+- Ended at (UTC): 2026-06-18T09:43:47Z
