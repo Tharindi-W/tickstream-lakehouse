@@ -1,17 +1,17 @@
 {
   "BTCUSDT": {
-    "date": "2026-06-18",
-    "ingested_at": "2026-06-19T10:42:36.733363+00:00",
-    "sha256": "bb5fb4994b35c3c3ef9feb1ac8f7cadd9542babaeb5cefe48f4748befed7842a"
+    "date": "2026-06-19",
+    "ingested_at": "2026-06-20T09:21:04.592120+00:00",
+    "sha256": "a8f752d707cd602b741fe2a51d986702bc7c9bb825c7b20fcc2ead6c178d6536"
   },
   "ETHUSDT": {
-    "date": "2026-06-18",
-    "ingested_at": "2026-06-19T10:42:54.601699+00:00",
-    "sha256": "23e8fd797a570d80c45b81f43ea3abfbe1ade168720826601e8e0af5b703e64c"
+    "date": "2026-06-19",
+    "ingested_at": "2026-06-20T09:21:18.652598+00:00",
+    "sha256": "2a714ad19b12f0ee2005d5fb0a28b6fe656d1d8575e3b107efc7a73e428e1b45"
   },
   "SOLUSDT": {
-    "date": "2026-06-18",
-    "ingested_at": "2026-06-19T10:43:09.056769+00:00",
-    "sha256": "c4dab04d7b5da2501def1e20052a6506ec756dc333e6b3809d7c012d7f2e89ed"
+    "date": "2026-06-19",
+    "ingested_at": "2026-06-20T09:21:30.166092+00:00",
+    "sha256": "c8eaffe1eb09355063945780a77904a6c6890f28bd3b3948df3118dc9338dfec"
   }
 }
