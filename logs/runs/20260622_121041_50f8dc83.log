@@ -1,0 +1,54 @@
+# Pipeline run 20260622_121041_50f8dc83
+
+Started at (UTC): 2026-06-22T12:10:41.843766+00:00
+
+[12:10:41] Run id: 20260622_121041_50f8dc83
+[12:10:41] Symbols: BTCUSDT, ETHUSDT, SOLUSDT
+[12:10:41] Batch date (T-1 UTC): 2026-06-21
+[12:10:41] Bronze container: bronze
+
+## Symbol: BTCUSDT
+
+[12:10:41] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-06-21.zip
+[12:10:42] Downloading and hashing in memory...
+[12:10:44] Downloaded 6.1 MiB. sha256 prefix: 50a6b22c2080
+[12:10:44] Uploading raw zip to az://bronze/raw/symbol=BTCUSDT/batch_date=2026-06-21/BTCUSDT-aggTrades-2026-06-21.zip
+[12:10:47] Parsing CSV from zip...
+[12:10:48] Parsed 420,826 rows, 8 columns
+[12:10:48] Uploading parquet copy to UC Volume /Volumes/workspace/default/tickstream_bronze/symbol=BTCUSDT/batch_date=2026-06-21/agg_trades.parquet
+[12:10:50] Volume upload done (10.5 MiB)
+[12:10:50] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[12:10:59] BTCUSDT done.
+
+## Symbol: ETHUSDT
+
+[12:10:59] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/ETHUSDT/ETHUSDT-aggTrades-2026-06-21.zip
+[12:11:00] Downloading and hashing in memory...
+[12:11:01] Downloaded 6.5 MiB. sha256 prefix: bf7ea7122079
+[12:11:01] Uploading raw zip to az://bronze/raw/symbol=ETHUSDT/batch_date=2026-06-21/ETHUSDT-aggTrades-2026-06-21.zip
+[12:11:04] Parsing CSV from zip...
+[12:11:05] Parsed 459,387 rows, 8 columns
+[12:11:05] Uploading parquet copy to UC Volume /Volumes/workspace/default/tickstream_bronze/symbol=ETHUSDT/batch_date=2026-06-21/agg_trades.parquet
+[12:11:06] Volume upload done (10.8 MiB)
+[12:11:06] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[12:11:15] ETHUSDT done.
+
+## Symbol: SOLUSDT
+
+[12:11:15] Checking source: https://data.binance.vision/data/spot/daily/aggTrades/SOLUSDT/SOLUSDT-aggTrades-2026-06-21.zip
+[12:11:15] Downloading and hashing in memory...
+[12:11:17] Downloaded 1.9 MiB. sha256 prefix: 3b25a915b498
+[12:11:17] Uploading raw zip to az://bronze/raw/symbol=SOLUSDT/batch_date=2026-06-21/SOLUSDT-aggTrades-2026-06-21.zip
+[12:11:19] Parsing CSV from zip...
+[12:11:19] Parsed 110,218 rows, 8 columns
+[12:11:19] Uploading parquet copy to UC Volume /Volumes/workspace/default/tickstream_bronze/symbol=SOLUSDT/batch_date=2026-06-21/agg_trades.parquet
+[12:11:20] Volume upload done (3.5 MiB)
+[12:11:20] Writing Bronze Delta to az://bronze/delta/bronze_agg_trades (append, partitioned by symbol+batch_date)
+[12:11:28] SOLUSDT done.
+
+## Result
+
+- Status: **SUCCESS**
+- Summary: processed=3, skipped_unchanged=0, missing_source=0, errors=0
+- Ended at (UTC): 2026-06-22T12:11:28.062104+00:00
+- Duration: 46.2 seconds
